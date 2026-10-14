@@ -1,0 +1,14 @@
+D:\Dokumente\Visual Studio 18\Projects\CommandQueueRemastered\src\tests\CoreChecks\bin\Release\net10.0\CoreChecks.exe
+D:\Dokumente\Visual Studio 18\Projects\CommandQueueRemastered\src\tests\CoreChecks\bin\Release\net10.0\CoreChecks.deps.json
+D:\Dokumente\Visual Studio 18\Projects\CommandQueueRemastered\src\tests\CoreChecks\bin\Release\net10.0\CoreChecks.runtimeconfig.json
+D:\Dokumente\Visual Studio 18\Projects\CommandQueueRemastered\src\tests\CoreChecks\bin\Release\net10.0\CoreChecks.dll
+D:\Dokumente\Visual Studio 18\Projects\CommandQueueRemastered\src\tests\CoreChecks\bin\Release\net10.0\CoreChecks.pdb
+D:\Dokumente\Visual Studio 18\Projects\CommandQueueRemastered\src\tests\CoreChecks\obj\Release\net10.0\CoreChecks.GeneratedMSBuildEditorConfig.editorconfig
+D:\Dokumente\Visual Studio 18\Projects\CommandQueueRemastered\src\tests\CoreChecks\obj\Release\net10.0\CoreChecks.AssemblyInfoInputs.cache
+D:\Dokumente\Visual Studio 18\Projects\CommandQueueRemastered\src\tests\CoreChecks\obj\Release\net10.0\CoreChecks.AssemblyInfo.cs
+D:\Dokumente\Visual Studio 18\Projects\CommandQueueRemastered\src\tests\CoreChecks\obj\Release\net10.0\CoreChecks.csproj.CoreCompileInputs.cache
+D:\Dokumente\Visual Studio 18\Projects\CommandQueueRemastered\src\tests\CoreChecks\obj\Release\net10.0\CoreChecks.dll
+D:\Dokumente\Visual Studio 18\Projects\CommandQueueRemastered\src\tests\CoreChecks\obj\Release\net10.0\refint\CoreChecks.dll
+D:\Dokumente\Visual Studio 18\Projects\CommandQueueRemastered\src\tests\CoreChecks\obj\Release\net10.0\CoreChecks.pdb
+D:\Dokumente\Visual Studio 18\Projects\CommandQueueRemastered\src\tests\CoreChecks\obj\Release\net10.0\CoreChecks.genruntimeconfig.cache
+D:\Dokumente\Visual Studio 18\Projects\CommandQueueRemastered\src\tests\CoreChecks\obj\Release\net10.0\ref\CoreChecks.dll

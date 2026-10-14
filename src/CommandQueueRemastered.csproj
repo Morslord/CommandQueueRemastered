@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>CommandQueueRemastered</AssemblyName>
+    <GameDir Condition="'$(GameDir)' == ''">$(ROR2_GAME_DIR)</GameDir>
+    <ProfileDir Condition="'$(ProfileDir)' == ''">$(ROR2_PROFILE_DIR)</ProfileDir>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Version>0.3.1</Version>
+  </PropertyGroup>
+  <Target Name="CheckBuildPaths" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(GameDir)' == ''" Text="Set GameDir or ROR2_GAME_DIR." />
+    <Error Condition="'$(ProfileDir)' == ''" Text="Set ProfileDir or ROR2_PROFILE_DIR." />
+  </Target>
+  <ItemGroup>
+    <Compile Remove="tools/**/*.cs;tests/**/*.cs" />
+    <Reference Include="Unity.TextMeshPro"><HintPath>$(GameDir)\Risk of Rain 2_Data\Managed\Unity.TextMeshPro.dll</HintPath><Private>false</Private></Reference>
+    <EmbeddedResource Include="../build/icon.png" LogicalName="CommandQueueRemastered.icon.png" Condition="Exists('../build/icon.png')" />
+    <Reference Include="BepInEx"><HintPath>$(ProfileDir)\BepInEx\core\BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(ProfileDir)\BepInEx\core\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="GameAssemblies">
+      <HintPath>$(GameDir)\Risk of Rain 2_Data\Managed\RoR2.dll</HintPath><Private>false</Private>
+    </Reference>
+    <Reference Include="$(GameDir)\Risk of Rain 2_Data\Managed\UnityEngine*.dll"><Private>false</Private></Reference>
+    <Reference Include="$(GameDir)\Risk of Rain 2_Data\Managed\com.unity.multiplayer-hlapi.Runtime.dll"><Private>false</Private></Reference>
+    <Reference Include="$(GameDir)\Risk of Rain 2_Data\Managed\HG*.dll"><Private>false</Private></Reference>
+    <Reference Include="Unity.Addressables"><HintPath>$(GameDir)\Risk of Rain 2_Data\Managed\Unity.Addressables.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.ResourceManager"><HintPath>$(GameDir)\Risk of Rain 2_Data\Managed\Unity.ResourceManager.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <Target Name="CopyReleasePluginToBuild" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <MakeDir Directories="$(MSBuildProjectDirectory)/../build" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildProjectDirectory)/../build" SkipUnchangedFiles="true" />
+  </Target>
+</Project>
+
