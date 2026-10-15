@@ -112,6 +112,91 @@ Check("Preset create, reload, rename and delete round trip on disk", () =>
         Directory.Delete(directory);
     }
 });
+void WithImportFiles(Action<string, string> action)
+{
+    string directory = Path.Combine(Path.GetTempPath(), "commandqueue-import-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try { action(Path.Combine(directory, "presets.json"), Path.Combine(directory, "commandQueueSaves.json")); }
+    finally
+    {
+        foreach (string file in new[] { "presets.json", "presets.json.bak", "presets.json.tmp", "commandQueueSaves.json" })
+        {
+            string path = Path.Combine(directory, file);
+            if (File.Exists(path)) File.Delete(path);
+        }
+        Directory.Delete(directory);
+    }
+}
+Check("User legacy presets import once, preserve existing saves and never return after deletion", () =>
+    WithImportFiles((path, source) =>
+    {
+        string original = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "legacy-presets.txt"));
+        File.WriteAllText(source, original);
+        DateTime modified = File.GetLastWriteTimeUtc(source);
+        // Exercise an existing 0.3.1 array file, not just a new empty store.
+        File.WriteAllText(path, "[{\"Id\":\"existing\",\"Name\":\"Multi\",\"Document\":{\"Version\":1,\"Queue\":[],\"RepeatedTiers\":[]}}]");
+        var store = new PresetStore(path); store.Load();
+        Assert(store.ImportLegacy(source) == 4 && store.Presets.Count == 5);
+        Assert(File.ReadAllText(source) == original && File.GetLastWriteTimeUtc(source) == modified);
+        var imported = store.Presets.Skip(1).ToArray();
+        Assert(imported.Select(p => p.Name).SequenceEqual(new[] { "Engi Repeat", "Multi", "Movespeed", "100% Crit" }));
+        Assert(imported[0].Document.Queue.Select(e => e.Pickup).SequenceEqual(new[] { "ItemIndex.Mushroom", "ItemIndex.FlatHealth", "ItemIndex.ChainLightning" }));
+        Assert(imported[0].Document.Queue.Select(e => e.Count).SequenceEqual(new[] { 2, 1, 1 }));
+        Assert(imported[1].Document.Queue.Count == 18 && imported[1].Document.Queue.Sum(e => e.Count) == 37);
+        Assert(imported.All(p => p.Document.RepeatedTiers.Count == 0));
+        foreach (var preset in imported) store.Delete(preset.Id);
+        store = new PresetStore(path); store.Load();
+        File.AppendAllText(source, "\nnew|Later|ItemIndex.Hoof*1,|1");
+        Assert(store.ImportLegacy(source) == 0 && store.Presets.Single().Id == "existing");
+        Assert(File.ReadAllText(source).StartsWith(original, StringComparison.Ordinal));
+    }));
+Check("Missing or invalid legacy input can retry without partial writes", () =>
+    WithImportFiles((path, source) =>
+    {
+        var store = new PresetStore(path);
+        Assert(store.ImportLegacy(source) == 0 && !File.Exists(path));
+        var queue = new QueueState(); queue.Enqueue("existing", 2); store.Add("Existing", queue);
+        string before = File.ReadAllText(path);
+        File.WriteAllText(source, "a|Valid|ItemIndex.Hoof*2,|1\nb|Invalid|ItemIndex.Mushroom*0,|1");
+        bool failed = false;
+        try { store.ImportLegacy(source); } catch (InvalidDataException) { failed = true; }
+        Assert(failed && store.Presets.Count == 1 && File.ReadAllText(path) == before);
+        File.WriteAllText(source, "a|Valid|ItemIndex.Hoof*1001,ItemIndex.MissingModItem*3,|1");
+        string sourceBefore = File.ReadAllText(source); DateTime modified = File.GetLastWriteTimeUtc(source);
+        Assert(store.ImportLegacy(source) == 1);
+        Assert(File.ReadAllText(source) == sourceBefore && File.GetLastWriteTimeUtc(source) == modified);
+        Assert(store.Presets.Last().Document.Queue.Select(e => e.Count).SequenceEqual(new[] { 999, 2, 3 }));
+        store = new PresetStore(path); store.Load(); Assert(store.ImportLegacy(source) == 0);
+    }));
+Check("Failed import writes retain memory and allow a successful retry", () =>
+    WithImportFiles((path, source) =>
+    {
+        File.WriteAllText(source, "a|Legacy|ItemIndex.Hoof*1,|1");
+        var store = new PresetStore(path);
+        Directory.CreateDirectory(path + ".tmp");
+        bool failed = false;
+        try
+        {
+            try { store.ImportLegacy(source); } catch (UnauthorizedAccessException) { failed = true; }
+            Assert(failed && store.Presets.Count == 0 && !File.Exists(path));
+        }
+        finally { Directory.Delete(path + ".tmp"); }
+        Assert(store.ImportLegacy(source) == 1);
+        store = new PresetStore(path); store.Load(); Assert(store.ImportLegacy(source) == 0);
+    }));
+Check("Empty legacy files complete once and corrupt destinations are protected", () =>
+    WithImportFiles((path, source) =>
+    {
+        File.WriteAllText(source, "\n");
+        var store = new PresetStore(path); Assert(store.ImportLegacy(source) == 0);
+        store = new PresetStore(path); store.Load();
+        File.WriteAllText(source, "a|Later|ItemIndex.Hoof*1,|1");
+        Assert(store.ImportLegacy(source) == 0 && store.Presets.Count == 0);
+        File.WriteAllText(path, "{\"Version\":999,\"Presets\":[]}");
+        bool failed = false;
+        try { new PresetStore(path).Load(); } catch (InvalidDataException) { failed = true; }
+        Assert(failed && File.ReadAllText(path).Contains("999"));
+    }));
 Check("Left-click increases the selected stack; Shift adds ten", () =>
 {
     var queue = new QueueState(); queue.Enqueue("a", 3);

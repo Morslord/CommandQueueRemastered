@@ -41,12 +41,25 @@ namespace CommandQueueRemastered.Core
     {
         private readonly string path;
         private List<QueuePreset> presets = new List<QueuePreset>();
+        private bool legacyImportCompleted;
         public IReadOnlyList<QueuePreset> Presets => presets;
         public PresetStore(string path) { this.path = path; }
         public void Load()
         {
             if (!File.Exists(path)) return;
-            var loaded = JsonStorage.Decode<List<QueuePreset>>(File.ReadAllText(path));
+            string json = File.ReadAllText(path);
+            // Read the original Remastered array as well as the import-aware container.
+            bool completed = false;
+            List<QueuePreset> loaded;
+            if (json.TrimStart().StartsWith("[", StringComparison.Ordinal))
+                loaded = JsonStorage.Decode<List<QueuePreset>>(json);
+            else
+            {
+                var file = JsonStorage.Decode<PresetFile>(json);
+                if (file == null || file.Version != 1) throw new InvalidDataException("Unsupported preset file.");
+                loaded = file.Presets;
+                completed = file.LegacyImportCompleted;
+            }
             if (loaded == null) throw new InvalidDataException("Missing preset list.");
             var ids = new HashSet<string>(StringComparer.Ordinal);
             foreach (var preset in loaded)
@@ -56,6 +69,15 @@ namespace CommandQueueRemastered.Core
                 QueueDocument.Decode(preset.Document.Encode());
             }
             presets = loaded;
+            legacyImportCompleted = completed;
+        }
+        public int ImportLegacy(string sourcePath)
+        {
+            if (legacyImportCompleted || !File.Exists(sourcePath)) return 0;
+            // Parse everything before writing: malformed input must not cause a partial import.
+            var imported = LegacyPresetImporter.Parse(File.ReadAllLines(sourcePath));
+            Commit(list => list.AddRange(imported), completeLegacyImport: true);
+            return imported.Count;
         }
         public void Add(string name, QueueState state)
         {
@@ -68,18 +90,28 @@ namespace CommandQueueRemastered.Core
             Commit(list => list.Find(preset => preset.Id == id).Name = name.Trim());
         }
         public void Delete(string id) => Commit(list => list.RemoveAll(preset => preset.Id == id));
-        private void Commit(Action<List<QueuePreset>> change)
+        private void Commit(Action<List<QueuePreset>> change, bool completeLegacyImport = false)
         {
             // Publish in-memory changes only after the file replacement succeeds.
             var updated = JsonStorage.Decode<List<QueuePreset>>(JsonStorage.Encode(presets));
             change(updated);
             string temporary = path + ".tmp";
             Directory.CreateDirectory(Path.GetDirectoryName(path));
-            File.WriteAllText(temporary, JsonStorage.Encode(updated));
+            bool completed = legacyImportCompleted || completeLegacyImport;
+            File.WriteAllText(temporary, JsonStorage.Encode(new PresetFile
+                { Version = 1, Presets = updated, LegacyImportCompleted = completed }));
             if (File.Exists(path)) File.Replace(temporary, path, path + ".bak");
             else File.Move(temporary, path);
             presets = updated;
+            legacyImportCompleted = completed;
         }
+    }
+
+    public sealed class PresetFile
+    {
+        public int Version { get; set; }
+        public List<QueuePreset> Presets { get; set; }
+        public bool LegacyImportCompleted { get; set; }
     }
 
     internal static class JsonStorage

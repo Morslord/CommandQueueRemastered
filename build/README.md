@@ -1,8 +1,10 @@
 # CommandQueue Remastered
 
-**Beta 0.3.1** — plan your Artifact of Command picks directly in the Risk of Rain 2 scoreboard.
+**Beta 0.3.2** — plan your Artifact of Command picks directly in the Risk of Rain 2 scoreboard.
 
 Build item queues, repeat your preferred picks and save presets without leaving the game's interface. Remastered combines the functionality of CommandQueueExtended, CommandQueueExtendedIconFix and ProperSave_CommandQueueExtended in one mod.
+
+![CommandQueue Remastered scoreboard menu](https://raw.githubusercontent.com/Morslord/CommandQueueRemastered/main/img/CommandQueue_Menu.jpg)
 
 ## Features
 
@@ -72,6 +74,8 @@ Loading replaces only groups containing items in that preset; other groups and t
 
 Presets are stored in `BepInEx/config/commandQueueRemastered.presets.json`. With ProperSave installed, run queue persistence is available for singleplayer and the multiplayer host. Multiplayer-client queue persistence is not implemented.
 
+On startup, Remastered imports presets from `BepInEx/config/commandQueueSaves.json` in the same profile once. Existing Remastered presets remain; the old file stays unchanged. Names, item order and quantities are retained. Repeat starts off because the old file does not store it. Deleting imported presets does not import them again. If the source is missing, it can be added before a later startup; invalid input is logged and retried on the next startup.
+
 ## Settings
 
 With RiskOfOptions installed, open **Settings → MOD OPTIONS → CommandQueue Remastered**. Otherwise edit `BepInEx/config/local.commandqueue.remastered.cfg`.
@@ -101,6 +105,15 @@ The selected item's temporary or ethereal status is preserved. An empty queue or
 
 This beta targets **Risk of Rain 2 1.5.0**. Multiplayer behavior and all mod combinations have not been fully validated. Controller support is untested.
 
-Each queue stack supports up to **999 items**. Importing saves from the older mods are not implemented.
+Each queue stack supports up to **999 items**. Larger imported stacks are split without losing items.
 
 When reporting a problem, include the mod and game versions, steps to reproduce it, relevant settings, and your `BepInEx/LogOutput.log`. A screenshot helps with interface problems.
+
+## Credits
+
+- [gabrielgad](https://thunderstore.io/c/riskofrain2/p/gabrielgad/CommandQueueExtended/) — CommandQueueExtended.
+- KubeRoot — original CommandQueue project.
+- [KennedyMindsetMovement](https://thunderstore.io/c/riskofrain2/p/KennedyMindsetMovement/ProperSave_CommandQueueExtended/) — ProperSave_CommandQueueExtended, the reference for CommandQueueExtended run queue persistence.
+- [KingEnderBrine / ProperSave](https://thunderstore.io/c/riskofrain2/p/KingEnderBrine/ProperSave/) — optional run save integration.
+- [Rune580 / RiskOfOptions](https://github.com/Rune580/RiskOfOptions) — optional in-game settings UI.
+- [Wet-Boys / LookingGlass](https://github.com/Wet-Boys/LookingGlass/) — optional enhanced item descriptions.

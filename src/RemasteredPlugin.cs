@@ -1,7 +1,6 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using BepInEx;
 using BepInEx.Bootstrap;
@@ -26,7 +25,7 @@ namespace CommandQueueRemastered
     {
         public const string Guid = "local.commandqueue.remastered";
         public const string Name = "CommandQueue Remastered";
-        public const string Version = "0.3.1";
+        public const string Version = "0.3.2";
         internal const float ItemIconBaseSize = 51.2f;
         internal static RemasteredPlugin Instance;
         internal readonly QueueState Queue = new QueueState(ItemGroups.GroupOf);
@@ -75,6 +74,15 @@ namespace CommandQueueRemastered
                 Presets = new PresetStore(System.IO.Path.Combine(Paths.ConfigPath, "commandQueueRemastered.presets.json"));
                 try { Presets.Load(); }
                 catch (Exception exception) { Logger.LogError("Preset file could not be loaded; existing file retained: " + exception); presetsReadFailed = true; }
+                if (!presetsReadFailed)
+                {
+                    try
+                    {
+                        int imported = Presets.ImportLegacy(System.IO.Path.Combine(Paths.ConfigPath, "commandQueueSaves.json"));
+                        if (imported > 0) Logger.LogInfo("Imported " + imported + " legacy CommandQueue presets. Source file retained unchanged.");
+                    }
+                    catch (Exception exception) { Logger.LogError("Legacy preset import failed; no presets imported. Import will retry on next startup: " + exception); }
+                }
                 harmony = new Harmony(Guid);
                 harmony.PatchAll(typeof(RemasteredPlugin).Assembly);
                 LookingGlassCommandCompatibility.Register(harmony, this);

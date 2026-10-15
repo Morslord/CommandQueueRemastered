@@ -1,6 +1,6 @@
 # CommandQueue Remastered
 
-**Beta 0.3.1** — plan Artifact of Command item queues directly in the Risk of Rain 2 scoreboard.
+**Beta 0.3.2** — plan Artifact of Command item queues directly in the Risk of Rain 2 scoreboard.
 
 Build item queues, repeat your preferred picks and save presets without leaving the game's interface.
 
@@ -29,6 +29,8 @@ Interact with a Command essence to select the next eligible item from its tier's
 
 ## Queue controls
 
+**Controller support is untested and controller compatibility is unverified.** Keyboard and mouse are the intended controls.
+
 | Action | Result |
 | --- | --- |
 | Left-click an available item | Queue one item |
@@ -56,6 +58,8 @@ Enable **Repeat** for a group to keep using its plan. With `RotateRepeatedItems`
 Presets support saving, loading, renaming, deletion and read-only **Preview**. Select a saved row to use its action buttons. Loading replaces only groups containing items in the preset; other groups and their Repeat settings remain intact. An empty preset leaves the queue unchanged.
 
 Presets are stored in `BepInEx/config/commandQueueRemastered.presets.json`. Invalid preset data is logged, and preset writes are disabled for that session to protect the file.
+
+Remastered automatically imports `BepInEx/config/commandQueueSaves.json` from the same profile once, adding legacy CommandQueue / CommandQueueExtended presets without changing the source or existing presets. Import completion is stored with the presets, so deleted imports stay deleted. Names, order and quantities are retained; Repeat starts off because the legacy format contains no Repeat settings. A missing source can be added before a later startup. Invalid source data aborts the entire import and is logged for retry on the next startup.
 
 With ProperSave installed, run queue persistence is available for singleplayer and the multiplayer host. Multiplayer-client queue persistence is not supported.
 
@@ -86,11 +90,7 @@ Menu scale is limited by available screen space. Temporary and ethereal items ea
 
 Selected pickups retain their temporary or ethereal status. An empty queue or unavailable next item opens the normal picker.
 
-## Validation and reporting
-
-The 0.3.1 Release build and 37 core checks have passed. In-game feedback confirms description containment and immediate stacking during rotating Repeat. This does not establish full validation of all interface cases, item tiers, mod combinations or multiplayer behavior.
-
-**Controller support is untested and controller compatibility is unverified.** Keyboard and mouse are the intended controls.
+## Bug reports
 
 For bug reports, include the mod and game versions, reproduction steps, relevant settings and `BepInEx/LogOutput.log`. Include a screenshot for interface problems. Mod log entries use the **CommandQueue Remastered** source.
 

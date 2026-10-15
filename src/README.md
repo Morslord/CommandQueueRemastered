@@ -1,4 +1,4 @@
-# Building CommandQueue Remastered 0.3.1
+# Building CommandQueue Remastered 0.3.2
 
 The mod targets .NET Standard 2.1 and references the installed Risk of Rain 2 1.5.0 assemblies.
 
@@ -32,7 +32,7 @@ Run the core checks separately:
 dotnet run --project tests/CoreChecks -c Release
 ```
 
-These checks exercise queue behavior, selection policies and description formatting without launching the game. They do not validate Unity rendering, runtime hooks or multiplayer behavior.
+These checks exercise queue behavior, selection policies, description formatting and legacy preset import without launching the game. They do not validate Unity rendering, runtime hooks or multiplayer behavior.
 
 ## Required source files
 
@@ -42,6 +42,7 @@ Keep these files and directories in their repository locations:
 - `RemasteredPlugin.cs` and all C# files under `Core/`, `Game/` and `Integrations/`.
 - `../build/icon.png` for the embedded icon.
 - `tests/CoreChecks/CoreChecks.csproj` and `tests/CoreChecks/Program.cs` to run the core checks.
+- `tests/CoreChecks/Fixtures/commandQueueSaves.json` as the legacy import fixture for the core checks.
 
 The `tools/` directory is optional and is not required to compile the mod. Generated `bin/`, `obj/` and `.vs/` directories are not needed to rebuild it.
 
