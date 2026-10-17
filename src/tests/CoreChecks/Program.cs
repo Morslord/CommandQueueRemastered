@@ -695,4 +695,75 @@ Check("Preset order persists across reload with IDs, documents and import marker
         finally { Directory.Delete(path + ".tmp"); }
         Assert(failed && store.Presets.Select(p => p.Id).SequenceEqual(expected) && File.ReadAllText(path) == before);
     }));
+Check("All input modes apply independently to Players and Command Queue and update immediately", () =>
+{
+    Assert(MenuInputPolicy.Resolve(true, GameplayInputBlocking.On, false, false) == MenuInputMode.Block);
+    Assert(MenuInputPolicy.Resolve(true, GameplayInputBlocking.On, true, false) == MenuInputMode.Block);
+    Assert(MenuInputPolicy.Resolve(true, GameplayInputBlocking.CommandQueueOnly, false, false) == MenuInputMode.Allow);
+    Assert(MenuInputPolicy.Resolve(true, GameplayInputBlocking.CommandQueueOnly, true, false) == MenuInputMode.Block);
+    Assert(MenuInputPolicy.Resolve(true, GameplayInputBlocking.CommandQueueOnly, false, false) == MenuInputMode.Allow);
+    Assert(MenuInputPolicy.Resolve(true, GameplayInputBlocking.Off, true, false) == MenuInputMode.Allow);
+    Assert(MenuInputPolicy.Resolve(true, GameplayInputBlocking.Off, false, false) == MenuInputMode.Allow);
+    Assert(MenuInputPolicy.Resolve(true, GameplayInputBlocking.On, false, false) == MenuInputMode.Block);
+});
+Check("Native focus from clicks, hover or text input cannot stop allowed scoreboard gameplay", () =>
+{
+    foreach (bool nativeFocus in new[] { true, false })
+    foreach (bool queueView in new[] { true, false })
+    {
+        var off = MenuInputPolicy.Resolve(true, GameplayInputBlocking.Off, queueView, false);
+        Assert(!MenuInputPolicy.GameplayUiFocused(nativeFocus, off));
+        var queueOnly = MenuInputPolicy.Resolve(true, GameplayInputBlocking.CommandQueueOnly, queueView, false);
+        Assert(MenuInputPolicy.GameplayUiFocused(nativeFocus, queueOnly) == queueView);
+        var on = MenuInputPolicy.Resolve(true, GameplayInputBlocking.On, queueView, false);
+        Assert(MenuInputPolicy.GameplayUiFocused(nativeFocus, on));
+    }
+});
+Check("Closed or non-owning scoreboards and the actual pause menu retain native gameplay focus", () =>
+{
+    foreach (GameplayInputBlocking mode in Enum.GetValues<GameplayInputBlocking>())
+    foreach (bool queueView in new[] { true, false })
+    foreach (bool nativeFocus in new[] { true, false })
+    {
+        var closed = MenuInputPolicy.Resolve(false, mode, queueView, false);
+        var paused = MenuInputPolicy.Resolve(true, mode, queueView, true);
+        Assert(closed == MenuInputMode.KeepNative && paused == MenuInputMode.KeepNative);
+        Assert(MenuInputPolicy.GameplayUiFocused(nativeFocus, closed) == nativeFocus);
+        Assert(MenuInputPolicy.GameplayUiFocused(nativeFocus, paused) == nativeFocus);
+    }
+});
+Check("Releasing buffered jump and sprint suppression preserves raw input and previous poll states", () =>
+{
+    var first = new InputBufferFixture(); var second = new InputBufferFixture();
+    var release = ButtonBufferAccess.CreateReleaseAction<InputBufferFixture>();
+    string raw = first.RawState;
+    Assert(first.JumpSuppressed && first.SprintSuppressed);
+    release(first);
+    Assert(!first.JumpSuppressed && !first.SprintSuppressed && first.RawState == raw);
+    Assert(second.JumpSuppressed && second.SprintSuppressed && second.RawState == raw);
+    release(first); Assert(first.RawState == raw);
+});
+Check("Unexpected button-buffer layouts fail explicitly instead of partially changing input", () =>
+{
+    bool rejected = false;
+    try { ButtonBufferAccess.CreateReleaseAction<UnsupportedInputBufferFixture>(); }
+    catch (InvalidOperationException) { rejected = true; }
+    Assert(rejected);
+});
 Console.WriteLine($"{passed} checks passed.");
+
+sealed class InputBufferFixture
+{
+    private Buffers buttonBuffers = new Buffers
+    {
+        jump = new Button { suppressUntilReleased = true, bufferedValue = true, previousPollReportedValue = false, releasedSinceLastPoll = true },
+        sprint = new Button { suppressUntilReleased = true, bufferedValue = false, previousPollReportedValue = true, releasedSinceLastPoll = false }
+    };
+    public bool JumpSuppressed => buttonBuffers.jump.suppressUntilReleased;
+    public bool SprintSuppressed => buttonBuffers.sprint.suppressUntilReleased;
+    public string RawState => $"{buttonBuffers.jump.bufferedValue}:{buttonBuffers.jump.previousPollReportedValue}:{buttonBuffers.jump.releasedSinceLastPoll}:" +
+        $"{buttonBuffers.sprint.bufferedValue}:{buttonBuffers.sprint.previousPollReportedValue}:{buttonBuffers.sprint.releasedSinceLastPoll}";
+    private struct Buffers { public Button jump, sprint; }
+    private struct Button { public bool suppressUntilReleased, bufferedValue, previousPollReportedValue, releasedSinceLastPoll; }
+}
+sealed class UnsupportedInputBufferFixture { }

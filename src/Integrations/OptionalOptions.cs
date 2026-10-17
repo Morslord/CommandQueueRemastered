@@ -15,6 +15,7 @@ namespace CommandQueueRemastered.Integrations
             foreach (var entry in plugin.GroupOptions.Values)
                 RegisterEntry(plugin, assembly, "CheckBoxOption", "CheckBoxConfig", entry);
             RegisterEntry(plugin, assembly, "CheckBoxOption", "CheckBoxConfig", plugin.RotateRepeatedItems);
+            RegisterEntry(plugin, assembly, "ChoiceOption", "ChoiceConfig", plugin.BlockGameplayInput);
             RegisterEntry(plugin, assembly, "SliderOption", "SliderConfig", plugin.MenuScale);
             RegisterEntry(plugin, assembly, "SliderOption", "SliderConfig", plugin.ItemScale);
             RegisterEntry(plugin, assembly, "ChoiceOption", "ChoiceConfig", plugin.TemporaryItemBehavior);

@@ -6,7 +6,7 @@
     <GameDir Condition="'$(GameDir)' == ''">$(ROR2_GAME_DIR)</GameDir>
     <ProfileDir Condition="'$(ProfileDir)' == ''">$(ROR2_PROFILE_DIR)</ProfileDir>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <Version>0.3.3</Version>
+    <Version>0.3.4</Version>
   </PropertyGroup>
   <Target Name="CheckBuildPaths" BeforeTargets="ResolveReferences">
     <Error Condition="'$(GameDir)' == ''" Text="Set GameDir or ROR2_GAME_DIR." />

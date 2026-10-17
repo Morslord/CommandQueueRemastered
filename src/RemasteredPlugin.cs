@@ -25,13 +25,14 @@ namespace CommandQueueRemastered
     {
         public const string Guid = "local.commandqueue.remastered";
         public const string Name = "CommandQueue Remastered";
-        public const string Version = "0.3.3";
+        public const string Version = "0.3.4";
         internal const float ItemIconBaseSize = 51.2f;
         internal static RemasteredPlugin Instance;
         internal readonly QueueState Queue = new QueueState(ItemGroups.GroupOf);
         internal PresetStore Presets;
         internal readonly Dictionary<string, ConfigEntry<bool>> GroupOptions = new Dictionary<string, ConfigEntry<bool>>(StringComparer.Ordinal);
         internal ConfigEntry<bool> RotateRepeatedItems;
+        internal ConfigEntry<GameplayInputBlocking> BlockGameplayInput;
         internal ConfigEntry<float> ItemScale, MenuScale;
         internal ConfigEntry<SpecialPickupBehavior> TemporaryItemBehavior, EtherealItemBehavior;
         internal ConfigEntry<ExclusiveItemBehavior> ExclusiveItemSelection;
@@ -64,6 +65,8 @@ namespace CommandQueueRemastered
                 foreach (string group in ItemGroups.Names)
                     GroupOptions.Add(group, Config.Bind("Groups", group, true, "Enable the " + group + " queue group."));
                 RotateRepeatedItems = Config.Bind("General", "RotateRepeatedItems", true, "Move collected repeated items to the queue end. When disabled, keep displayed order and quantities while cycling through every queued item internally.");
+                BlockGameplayInput = Config.Bind("General", "BlockGameplayInput", GameplayInputBlocking.On,
+                    "On: block gameplay in both scoreboard views. CommandQueueOnly: block only in Command Queue, allow gameplay in Players. Off: allow gameplay in both views, including while clicking, hovering, typing or confirming. UI actions can also trigger gameplay. The actual pause menu retains native control. Applies immediately.");
                 Queue.RotateRepeatedItems = RotateRepeatedItems.Value;
                 RotateRepeatedItems.SettingChanged += (_, __) => Queue.RotateRepeatedItems = RotateRepeatedItems.Value;
                 const string specialDescription = "ManualMenu: open the normal picker. UseQueueWithoutConsuming: select the tier's current queued item without changing quantities, order or Repeat progress. UseQueueNormally: select and consume normally. Missing or unavailable queued items open the normal picker.";
@@ -88,6 +91,7 @@ namespace CommandQueueRemastered
                 }
                 harmony = new Harmony(Guid);
                 harmony.PatchAll(typeof(RemasteredPlugin).Assembly);
+                Logger.LogInfo("Scoreboard gameplay input hooks registered (Update and CanSendBodyInput).");
                 LookingGlassCommandCompatibility.Register(harmony, this);
                 Run.onRunStartGlobal += OnRunStart;
                 Run.onRunDestroyGlobal += OnRunEnd;
@@ -111,7 +115,9 @@ namespace CommandQueueRemastered
         private SpecialPickupBehavior SelectionBehavior(UniquePickup pickup) => SpecialPickupPolicy.Resolve(
             pickup.isTempItem, pickup.isRental, TemporaryItemBehavior.Value, EtherealItemBehavior.Value);
         internal bool GroupEnabled(string group) => group != null && GroupOptions.TryGetValue(group, out var option) && option.Value;
-        internal bool BlocksGameplay(LocalUser user) => scoreboardViews.Any(view => view && view.BlocksGameplay(user));
+        internal MenuInputMode InputMode(LocalUser user) => scoreboardViews.Where(view => view)
+            .Select(view => view.InputMode(user)).FirstOrDefault(mode => mode != MenuInputMode.KeepNative);
+        internal bool BlocksGameplay(LocalUser user) => InputMode(user) == MenuInputMode.Block;
         internal bool SuppressPauseShortcut => scoreboardViews.Any(view => view && view.SuppressPauseShortcut);
 
         private void Update()

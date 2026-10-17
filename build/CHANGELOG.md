@@ -1,3 +1,9 @@
+## VERSION 0.3.4
+
+- Add BlockGameplayInput in General settings and RiskOfOptions with three choices: On (default, block both scoreboard views), CommandQueueOnly (block Command Queue while allowing gameplay in Players), and Off (allow gameplay in both views). Changes and view switches apply immediately.
+- Fix controls becoming blocked after clicking or hovering scoreboard buttons, including buffered jump and sprint inputs. In unblocked views, gameplay stays active while typing preset names or confirming Clear all. UI actions can also trigger gameplay actions; the actual pause menu and normal cursor/camera behavior remain in effect.
+- Restore the credit link to KubeRoot's original CommandQueue in both READMEs.
+
 ## VERSION 0.3.3
 
 - Add a Pause button between Repeat and Clear group for the currently selected group. Each group can be paused independently; the button turns orange-yellow when that group is paused. Essences for paused groups open normal Command menus without consuming the queue or advancing Repeat. Other groups continue automatically. The shared Void tab pauses all Void tiers together. Group pauses reset at run start/end and are not stored in presets or ProperSave.

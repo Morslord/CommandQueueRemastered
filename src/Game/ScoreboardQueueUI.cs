@@ -67,8 +67,12 @@ namespace CommandQueueRemastered.Game
         private float nextRefresh;
         private const float Width = 1280, Height = 720;
         private LocalUser User => hud ? hud.localUserViewer : null;
-        public bool BlocksGameplay(LocalUser user) => user != null && user == User && !failed && isActiveAndEnabled &&
-            HUD.IsScoreboardActive(user);
+        public MenuInputMode InputMode(LocalUser user)
+        {
+            bool active = user != null && user == User && !failed && isActiveAndEnabled && HUD.IsScoreboardActive(user);
+            return MenuInputPolicy.Resolve(active, plugin.BlockGameplayInput.Value, queueView,
+                user != null && user.pauseScreenController != null);
+        }
         private Camera EventCamera => root.GetComponentInParent<Canvas>().rootCanvas.worldCamera;
         private static bool Shift => Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
         private static bool Control => Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);

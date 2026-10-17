@@ -1,4 +1,4 @@
-# Building CommandQueue Remastered 0.3.3
+# Building CommandQueue Remastered 0.3.4
 
 The mod targets .NET Standard 2.1 and references the installed Risk of Rain 2 1.5.0 assemblies.
 
@@ -32,7 +32,7 @@ Run the core checks separately:
 dotnet run --project tests/CoreChecks -c Release
 ```
 
-These checks exercise queue behavior, selection policies, description formatting and legacy preset import without launching the game. They do not validate Unity rendering, runtime hooks or multiplayer behavior.
+These checks exercise queue behavior, selection and menu-input policies, description formatting and legacy preset import without launching the game. They do not validate Unity rendering, runtime hooks or multiplayer behavior.
 
 ## Required source files
 

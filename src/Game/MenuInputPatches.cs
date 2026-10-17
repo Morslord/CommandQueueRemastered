@@ -2,6 +2,11 @@ using HarmonyLib;
 using RoR2;
 using RoR2.UI;
 using UnityEngine;
+using CommandQueueRemastered.Core;
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+using System.Reflection.Emit;
 
 namespace CommandQueueRemastered.Game
 {
@@ -18,30 +23,43 @@ namespace CommandQueueRemastered.Game
         private static bool Prefix() => RemasteredPlugin.Instance?.SuppressPauseShortcut != true;
     }
 
-    [HarmonyPatch(typeof(LocalUser), "get_isUIFocused")]
-    internal static class MenuFocusPatch
+    [HarmonyPatch]
+    internal static class MenuGameplayFocusPatch
     {
-        private static void Postfix(LocalUser __instance, ref bool __result)
+        private static IEnumerable<MethodBase> TargetMethods()
         {
-            if (RemasteredPlugin.Instance?.BlocksGameplay(__instance) == true) __result = true;
+            yield return AccessTools.DeclaredMethod(typeof(PlayerCharacterMasterController), "Update");
+            yield return AccessTools.DeclaredMethod(typeof(PlayerCharacterMasterController), "CanSendBodyInput");
         }
-    }
-
-    [HarmonyPatch(typeof(LocalUser), "GetUIPassthrough")]
-    internal static class MenuPassthroughPatch
-    {
-        private static bool Prefix(LocalUser __instance, ref UIInputPassthrough __result)
+        private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions, MethodBase __originalMethod)
         {
-            if (RemasteredPlugin.Instance?.BlocksGameplay(__instance) != true) return true;
-            __result = null; return false;
+            var nativeFocus = AccessTools.PropertyGetter(typeof(LocalUser), "isUIFocused");
+            var gameplayFocus = AccessTools.Method(typeof(MenuGameplayFocusPatch), nameof(GameplayFocused));
+            int replaced = 0;
+            var result = new List<CodeInstruction>();
+            foreach (var instruction in instructions)
+            {
+                if (instruction.Calls(nativeFocus))
+                {
+                    instruction.opcode = OpCodes.Call; instruction.operand = gameplayFocus; replaced++;
+                }
+                result.Add(instruction);
+            }
+            if (replaced != 1) throw new InvalidOperationException("Unsupported gameplay focus IL in " + __originalMethod.Name + ": " + replaced);
+            return result;
         }
+        private static bool GameplayFocused(LocalUser user) => MenuInputPolicy.GameplayUiFocused(
+            user != null && user.isUIFocused, RemasteredPlugin.Instance?.InputMode(user) ?? MenuInputMode.KeepNative);
     }
 
     [HarmonyPatch(typeof(PlayerCharacterMasterController), "Update")]
     internal static class MenuBodyInputPatch
     {
+        private static readonly Action<PlayerCharacterMasterController> releaseButtons =
+            ButtonBufferAccess.CreateReleaseAction<PlayerCharacterMasterController>();
         private static readonly System.Reflection.MethodInfo suppressButtons = AccessTools.Method(typeof(PlayerCharacterMasterController), "SuppressAllButtonsUntilReleased");
         private static bool reportedFailure;
+        private static bool Prepare() => releaseButtons != null;
         internal static void SuppressButtons(PlayerCharacterMasterController controller)
         {
             if (!controller || reportedFailure) return;
@@ -51,6 +69,11 @@ namespace CommandQueueRemastered.Game
                 reportedFailure = true;
                 RemasteredPlugin.Instance?.LogError("Could not suppress buffered gameplay buttons", exception);
             }
+        }
+        private static void Prefix(PlayerCharacterMasterController __instance)
+        {
+            var user = __instance.networkUser?.localUser;
+            if (RemasteredPlugin.Instance?.InputMode(user) == MenuInputMode.Allow) releaseButtons(__instance);
         }
         private static void Postfix(PlayerCharacterMasterController __instance)
         {

@@ -1,6 +1,6 @@
 # CommandQueue Remastered
 
-**Beta 0.3.3** — plan your Artifact of Command picks directly in the Risk of Rain 2 scoreboard.
+**Beta 0.3.4** — plan your Artifact of Command picks directly in the Risk of Rain 2 scoreboard.
 
 Build item queues, repeat your preferred picks and save presets without leaving the game's interface. Remastered combines the functionality of CommandQueueExtended, CommandQueueExtendedIconFix and ProperSave_CommandQueueExtended in one mod.
 
@@ -9,6 +9,7 @@ Build item queues, repeat your preferred picks and save presets without leaving 
 ## Features
 
 - **Scoreboard integration:** switch between the original **Players** overview and **Command Queue** using the game's configured scoreboard key.
+- **Optional gameplay controls:** choose `On`, `CommandQueueOnly` or `Off` for `BlockGameplayInput` to control which scoreboard views block movement and gameplay buttons.
 - **Item queues:** add quantities, reorder or split stacks with drag and drop, remove items and clear queues with confirmation.
 - **Automatic Command selection:** selects the next queued item for the essence's actual tier. Empty queues or unavailable next items normally open the manual selection menu; the exclusive-item setting below provides an optional exception.
 - **Pause:** pause automatic selection independently for each item group without losing quantities or Repeat progress. The Pause button turns orange-yellow when the currently selected group is paused.
@@ -91,11 +92,22 @@ With RiskOfOptions installed, open **Settings → MOD OPTIONS → CommandQueue R
 | --- | --- | --- |
 | Groups | Nine independent group toggles | All enabled |
 | General | RotateRepeatedItems | Enabled |
+| General | BlockGameplayInput | On |
 | General | MenuScale | 1.00x, range 0.50x–2.00x |
 | General | ItemScale | 1.00x, range 0.50x–2.00x |
 | Special items | TemporaryItemBehavior | ManualMenu |
 | Special items | EtherealItemBehavior | ManualMenu |
 | Special items | ExclusiveItemSelection | Default |
+
+**BlockGameplayInput** has three choices and defaults to **On**:
+
+| Mode | Players | Command Queue |
+| --- | --- | --- |
+| On | Gameplay blocked | Gameplay blocked |
+| CommandQueueOnly | Gameplay active | Gameplay blocked |
+| Off | Gameplay active | Gameplay active |
+
+Changes and view switches apply immediately. In an unblocked view, movement and gameplay buttons stay active after clicking or hovering buttons, while typing preset names, and during the Clear all confirmation. UI actions can therefore also trigger gameplay actions. The UI keeps its normal focus and the cursor remains available for menu interaction; mouse-look follows the game's normal cursor behavior. The actual pause menu and the game's camera-control restrictions remain in effect.
 
 Menu scale affects the whole interface and is limited by the available screen space. Item scale adjusts icon size separately.
 
