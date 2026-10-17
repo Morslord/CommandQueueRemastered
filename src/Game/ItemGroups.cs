@@ -43,6 +43,13 @@ namespace CommandQueueRemastered.Game
         public static string GroupOf(string pickup) => Group(Definition(pickup));
         public static string GroupOfTier(string tier) => Enum.TryParse(tier, out ItemTier value) ? Group(value) : null;
         public static string PickupName(ItemDef item) => PickupCatalog.GetPickupDef(PickupCatalog.FindPickupIndex(item.itemIndex))?.internalName;
+        public static bool IsExclusivePickup(string pickup)
+        {
+            var item = Definition(pickup);
+            return item && (item == RoR2Content.Items.TitanGoldDuringTP || item == DLC1Content.Items.VoidMegaCrabItem ||
+                item == DLC3Content.Items.MasterCore || item == DLC3Content.Items.MasterBattery ||
+                item == DLC3Content.Items.PowerCube || item == DLC3Content.Items.PowerPyramid);
+        }
         public static bool TryVoidMarkerColor(ItemDef item, out Color color)
         {
             color = Color.white;

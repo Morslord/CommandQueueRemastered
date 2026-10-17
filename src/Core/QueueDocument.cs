@@ -90,6 +90,20 @@ namespace CommandQueueRemastered.Core
             Commit(list => list.Find(preset => preset.Id == id).Name = name.Trim());
         }
         public void Delete(string id) => Commit(list => list.RemoveAll(preset => preset.Id == id));
+        // Boundary is measured in the displayed list before removing the source row.
+        public void MoveToBoundary(string id, int boundary)
+        {
+            int source = presets.FindIndex(preset => preset.Id == id);
+            if (source < 0) throw new ArgumentException("Unknown preset.", nameof(id));
+            if (boundary < 0 || boundary > presets.Count) throw new ArgumentOutOfRangeException(nameof(boundary));
+            if (boundary == source || boundary == source + 1) return;
+            Commit(list =>
+            {
+                var preset = list[source];
+                list.RemoveAt(source);
+                list.Insert(boundary > source ? boundary - 1 : boundary, preset);
+            });
+        }
         private void Commit(Action<List<QueuePreset>> change, bool completeLegacyImport = false)
         {
             // Publish in-memory changes only after the file replacement succeeds.

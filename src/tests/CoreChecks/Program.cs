@@ -473,4 +473,226 @@ Check("Normally handled special pickups use regular consumption and unavailable 
     SpecialPickupPolicy.CompleteSelection(queue, 0, "Tier1", SpecialPickupBehavior.UseQueueNormally);
     Assert(queue.Entries[0].Count == 1 && queue.Entries[1].Pickup == "b");
 });
+Check("Group pause blocks its selection without resetting stationary Repeat progress", () =>
+{
+    var queue = new QueueState(_ => "Boss") { RotateRepeatedItems = false };
+    queue.Replace(new[] { new QueueEntry("a", 1), new QueueEntry("seed", 2) }, new[] { "Boss" });
+    queue.Consume(queue.FindHead("Boss", _ => "Boss"), "Boss");
+    var options = new[] { new CommandOption("seed", "Boss", true) };
+    string before = QueueDocument.Capture(queue).Encode();
+    queue.TogglePause("Boss");
+    Assert(CommandSelection.FindOption(queue, options, "Boss", _ => "Boss") == -1);
+    Assert(CommandSelection.FindOption(queue, options, "Boss", _ => "Boss", _ => true, ExclusiveItemBehavior.Automatic) == -1);
+    queue.TogglePause("Boss");
+    Assert(queue.FindHead("Boss", _ => "Boss", false) == 1 && before == QueueDocument.Capture(queue).Encode());
+    queue.TogglePause("Boss"); queue.Reset(); Assert(!queue.IsGroupPaused("Boss") && queue.Entries.Count == 0);
+});
+Check("Pausing groups independently leaves other queued tiers selectable", () =>
+{
+    string Group(string pickup) => pickup == "white" ? "White" : "Green";
+    string Tier(string pickup) => pickup == "white" ? "Tier1" : "Tier2";
+    var queue = new QueueState(Group);
+    queue.Enqueue("white", 3); queue.Enqueue("green", 2);
+    var white = new[] { new CommandOption("white", "Tier1", true) };
+    var green = new[] { new CommandOption("green", "Tier2", true) };
+    queue.TogglePause("White");
+    Assert(queue.IsGroupPaused("White") && !queue.IsGroupPaused("Green"));
+    Assert(CommandSelection.FindOption(queue, white, "Tier1", Tier) == -1);
+    Assert(CommandSelection.FindOption(queue, green, "Tier2", Tier) == 0);
+    queue.TogglePause("Green"); queue.TogglePause("White");
+    Assert(!queue.IsGroupPaused("White") && queue.IsGroupPaused("Green"));
+    Assert(CommandSelection.FindOption(queue, white, "Tier1", Tier) == 0);
+    Assert(CommandSelection.FindOption(queue, green, null, Tier) == -1);
+    Assert(queue.Entries.Select(entry => entry.Count).SequenceEqual(new[] { 3, 2 }));
+    queue.Reset(); Assert(!queue.IsGroupPaused("White") && !queue.IsGroupPaused("Green"));
+});
+Check("Void group pause covers all actual Void tiers and exclusive Automatic without an entry", () =>
+{
+    string Group(string pickup) => pickup.StartsWith("Void") ? "Void" : "Boss";
+    var queue = new QueueState(Group);
+    queue.TogglePause("Void");
+    foreach (string tier in new[] { "VoidTier1", "VoidTier2", "VoidTier3", "VoidBoss" })
+    {
+        var options = new[] { new CommandOption(tier, tier, true) };
+        Assert(CommandSelection.FindOption(queue, options, null, name => name, _ => true,
+            ExclusiveItemBehavior.Automatic) == -1);
+    }
+    var seed = new[] { new CommandOption("seed", "Boss", true) };
+    Assert(CommandSelection.FindOption(queue, seed, "Boss", _ => "Boss", _ => true, ExclusiveItemBehavior.Automatic) == 0);
+    queue.TogglePause("Boss");
+    Assert(CommandSelection.FindOption(queue, seed, "Boss", _ => "Boss", _ => true, ExclusiveItemBehavior.Automatic) == -1);
+    queue.TogglePause("Void");
+    var zoea = new[] { new CommandOption("VoidBoss", "VoidBoss", true) };
+    Assert(CommandSelection.FindOption(queue, zoea, null, name => name, _ => true, ExclusiveItemBehavior.Automatic) == 0);
+    Assert(queue.Entries.Count == 0 && queue.IsGroupPaused("Boss"));
+});
+Check("All six exclusive items select at any queue position with both policies and Repeat modes", () =>
+{
+    string[] pickups = { "ItemIndex.TitanGoldDuringTP", "ItemIndex.VoidMegaCrabItem", "ItemIndex.MasterCore",
+        "ItemIndex.MasterBattery", "ItemIndex.PowerCube", "ItemIndex.PowerPyramid" };
+    foreach (string pickup in pickups)
+    foreach (var mode in new[] { ExclusiveItemBehavior.Default, ExclusiveItemBehavior.Automatic })
+    foreach (bool rotate in new[] { true, false })
+    foreach (bool repeat in new[] { true, false })
+    foreach (int position in new[] { -1, 0, 1 })
+    {
+        var queue = new QueueState { RotateRepeatedItems = rotate };
+        var entries = new System.Collections.Generic.List<QueueEntry> { new("other", 2) };
+        if (position >= 0) entries.Insert(position, new QueueEntry(pickup, 2));
+        queue.Replace(entries, repeat ? new[] { "Boss" } : Array.Empty<string>());
+        var options = new[] { new CommandOption(pickup, "Boss", true) };
+        string before = QueueDocument.Capture(queue).Encode();
+        int choice = CommandSelection.FindOption(queue, options, "Boss", _ => "Boss", pickups.Contains, mode);
+        Assert(choice == (position >= 0 || mode == ExclusiveItemBehavior.Automatic ? 0 : -1));
+        Assert(before == QueueDocument.Capture(queue).Encode());
+        if (choice >= 0 && position >= 0)
+        {
+            int head = queue.FindPickup(pickup, "Boss", true);
+            SpecialPickupPolicy.CompleteSelection(queue, head, "Boss", SpecialPickupBehavior.UseQueueNormally);
+            Assert(queue.Entries.Single(e => e.Pickup == "other").Count == 2);
+            Assert(queue.Entries.Where(e => e.Pickup == pickup).Sum(e => e.Count) == (repeat ? 2 : 1));
+        }
+        options[0] = new CommandOption(pickup, "Boss", false);
+        Assert(CommandSelection.FindOption(queue, options, "Boss", _ => "Boss", pickups.Contains, mode) == -1);
+    }
+});
+Check("Exclusive queued items absent from a normal Boss essence do not block its next item", () =>
+{
+    foreach (bool rotate in new[] { true, false })
+    foreach (bool repeat in new[] { true, false })
+    foreach (var policy in new[] { ExclusiveItemBehavior.Default, ExclusiveItemBehavior.Automatic })
+    {
+        var queue = new QueueState { RotateRepeatedItems = rotate };
+        queue.Replace(new[] { new QueueEntry("seed", 2), new QueueEntry("normal", 3) }, repeat ? new[] { "Boss" } : Array.Empty<string>());
+        var options = new[] { new CommandOption("normal", "Boss", true) };
+        bool Exclusive(string name) => name == "seed";
+        Assert(CommandSelection.FindOption(queue, options, "Boss", _ => "Boss", Exclusive, policy) == 0);
+        int planned = CommandSelection.FindQueueEntry(queue, options, "Boss", _ => "Boss", Exclusive);
+        Assert(planned == 1);
+        var entry = queue.Entries[planned];
+        int validated = CommandSelection.FindQueueEntry(queue, options, "Boss", _ => "Boss", Exclusive);
+        Assert(ReferenceEquals(entry, queue.Entries[validated]));
+        string before = QueueDocument.Capture(queue).Encode();
+        SpecialPickupPolicy.CompleteSelection(queue, validated, "Boss", SpecialPickupBehavior.UseQueueWithoutConsuming);
+        Assert(before == QueueDocument.Capture(queue).Encode());
+        int consumed = CommandSelection.FindQueueEntry(queue, options, "Boss", _ => "Boss", Exclusive, true);
+        SpecialPickupPolicy.CompleteSelection(queue, consumed, "Boss", SpecialPickupBehavior.UseQueueNormally);
+        Assert(queue.Entries.Single(e => e.Pickup == "seed").Count == 2);
+        Assert(queue.Entries.Where(e => e.Pickup == "normal").Sum(e => e.Count) == (repeat ? 3 : 2));
+        queue.TogglePause("Queue");
+        Assert(CommandSelection.FindOption(queue, options, "Boss", _ => "Boss", Exclusive, policy) == -1);
+    }
+});
+Check("Normal stationary Repeat cycles without consuming or resetting absent exclusive items", () =>
+{
+    var queue = new QueueState { RotateRepeatedItems = false };
+    queue.Replace(new[] { new QueueEntry("seed", 1), new QueueEntry("normal-a", 2),
+        new QueueEntry("seed", 2), new QueueEntry("normal-b", 1) }, new[] { "Boss" });
+    queue.Consume(0, "Boss");
+    bool Exclusive(string name) => name == "seed";
+    var options = new[] { new CommandOption("normal-b", "Boss", true), new CommandOption("normal-a", "Boss", true) };
+    string before = QueueDocument.Capture(queue).Encode();
+    foreach (int expected in new[] { 1, 1, 3, 1, 1, 3 })
+    {
+        int head = CommandSelection.FindQueueEntry(queue, options, "Boss", _ => "Boss", Exclusive);
+        int choice = CommandSelection.FindOption(queue, options, "Boss", _ => "Boss", Exclusive);
+        Assert(head == expected && options[choice].Pickup == queue.Entries[head].Pickup);
+        Assert(queue.FindPickup("seed", "Boss") == 2);
+        queue.Consume(CommandSelection.FindQueueEntry(queue, options, "Boss", _ => "Boss", Exclusive, true), "Boss");
+    }
+    Assert(before == QueueDocument.Capture(queue).Encode() && queue.FindPickup("seed", "Boss") == 2);
+});
+Check("Only absent exclusive items are bypassed; unavailable and missing normal heads stay manual", () =>
+{
+    var queue = new QueueState();
+    bool Exclusive(string name) => name == "seed";
+    queue.Replace(new[] { new QueueEntry("seed", 1), new QueueEntry("blocked", 1), new QueueEntry("normal", 1) });
+    var options = new[] { new CommandOption("normal", "Boss", true) };
+    Assert(CommandSelection.FindOption(queue, options, "Boss", _ => "Boss", Exclusive) == -1);
+    var unavailable = new[] { options[0], new CommandOption("blocked", "Boss", false) };
+    Assert(CommandSelection.FindOption(queue, unavailable, "Boss", _ => "Boss", Exclusive) == -1);
+    queue.Remove(1, true);
+    var offeredSeed = new[] { new CommandOption("seed", "Boss", false), options[0] };
+    Assert(CommandSelection.FindOption(queue, offeredSeed, "Boss", _ => "Boss", Exclusive) == -1);
+    Assert(CommandSelection.FindOption(queue, options, "VoidBoss", _ => "Boss", Exclusive) == -1);
+    queue.Remove(1, true);
+    Assert(CommandSelection.FindOption(queue, options, "Boss", _ => "Boss", Exclusive) == -1);
+});
+Check("Pool-scoped validation detects a changed queue or newly offered exclusive head", () =>
+{
+    var queue = new QueueState(); queue.Enqueue("seed"); queue.Enqueue("normal");
+    bool Exclusive(string name) => name == "seed";
+    var options = new[] { new CommandOption("normal", "Boss", true) };
+    var planned = queue.Entries[CommandSelection.FindQueueEntry(queue, options, "Boss", _ => "Boss", Exclusive)];
+    var changedPool = new[] { new CommandOption("seed", "Boss", true), options[0] };
+    int head = CommandSelection.FindQueueEntry(queue, changedPool, "Boss", _ => "Boss", Exclusive);
+    Assert(head == 0 && !ReferenceEquals(planned, queue.Entries[head]));
+    queue.Replace(new[] { new QueueEntry("seed", 1), new QueueEntry("normal", 1) });
+    head = CommandSelection.FindQueueEntry(queue, options, "Boss", _ => "Boss", Exclusive);
+    Assert(!ReferenceEquals(planned, queue.Entries[head]));
+    queue.Remove(head, true);
+    Assert(CommandSelection.FindOption(queue, options, "Boss", _ => "Boss", Exclusive) == -1);
+});
+Check("Exclusive selection preserves normal pools, tier isolation and changed queue validation", () =>
+{
+    var queue = new QueueState(); queue.Enqueue("other"); queue.Enqueue("seed");
+    bool Exclusive(string pickup) => pickup == "seed";
+    var normal = new[] { new CommandOption("other", "Boss", false), new CommandOption("seed", "Boss", true) };
+    Assert(CommandSelection.FindOption(queue, normal, "Boss", _ => "Boss", Exclusive, ExclusiveItemBehavior.Automatic) == -1);
+    var special = new[] { normal[1] };
+    Assert(CommandSelection.FindOption(queue, special, "VoidBoss", _ => "Boss", Exclusive) == -1);
+    Assert(CommandSelection.FindOption(queue, special, null, _ => "Boss", Exclusive) == 0);
+    queue.Remove(1, true);
+    Assert(CommandSelection.FindOption(queue, special, "Boss", _ => "Boss", Exclusive) == -1);
+    Assert(CommandSelection.FindOption(queue, special, "Boss", _ => "Boss", Exclusive, ExclusiveItemBehavior.Automatic) == 0);
+    queue.TogglePause("Queue");
+    Assert(CommandSelection.FindOption(queue, special, "Boss", _ => "Boss", Exclusive, ExclusiveItemBehavior.Automatic) == -1);
+});
+Check("Exclusive stationary Repeat cycles offered stacks and preserves other tier progress", () =>
+{
+    var queue = new QueueState { RotateRepeatedItems = false };
+    queue.Replace(new[] { new QueueEntry("other", 2), new QueueEntry("seed", 1), new QueueEntry("other", 3),
+        new QueueEntry("seed", 2) }, new[] { "Boss" });
+    queue.Consume(0, "Boss");
+    foreach (int expected in new[] { 1, 3, 3, 1, 3, 3 })
+    {
+        Assert(queue.FindPickup("seed", "Boss") == expected);
+        queue.Consume(queue.FindPickup("seed", "Boss", true), "Boss");
+    }
+    Assert(queue.FindHead("Boss", _ => "Boss", false) == 0);
+    queue.Consume(0, "Boss");
+    Assert(queue.FindHead("Boss", _ => "Boss", false) == 2);
+    string before = QueueDocument.Capture(queue).Encode();
+    SpecialPickupPolicy.CompleteSelection(queue, queue.FindPickup("seed", "Boss"), "Boss", SpecialPickupBehavior.UseQueueWithoutConsuming);
+    Assert(before == QueueDocument.Capture(queue).Encode() && queue.FindPickup("seed", "Boss") == 1);
+});
+Check("Preset order persists across reload with IDs, documents and import marker intact", () =>
+    WithImportFiles((path, source) =>
+    {
+        var store = new PresetStore(path);
+        var queue = new QueueState(); queue.Enqueue("a", 4); queue.ToggleRepeat("Tier1");
+        store.Add("Same name", queue); store.Add("Same name", queue); store.Add("Third", queue);
+        File.WriteAllText(source, "a|Legacy|ItemIndex.Hoof*1,|1");
+        store.ImportLegacy(source);
+        var originals = store.Presets.ToDictionary(p => p.Id, p => p.Document.Encode());
+        var ids = store.Presets.Select(p => p.Id).ToArray();
+        store.MoveToBoundary(ids[0], 4);
+        Assert(store.Presets.Select(p => p.Id).SequenceEqual(new[] { ids[1], ids[2], ids[3], ids[0] }));
+        store.MoveToBoundary(ids[0], 0);
+        store.MoveToBoundary(ids[3], 1);
+        var expected = new[] { ids[0], ids[3], ids[1], ids[2] };
+        Assert(store.Presets.Select(p => p.Id).SequenceEqual(expected));
+        store = new PresetStore(path); store.Load();
+        Assert(store.Presets.Select(p => p.Id).SequenceEqual(expected));
+        Assert(store.Presets.All(p => p.Document.Encode() == originals[p.Id]) && store.ImportLegacy(source) == 0);
+        string before = File.ReadAllText(path);
+        store.MoveToBoundary(ids[3], 1); store.MoveToBoundary(ids[3], 2);
+        Throws(() => store.MoveToBoundary("missing", 0)); Throws(() => store.MoveToBoundary(ids[0], 5));
+        Assert(File.ReadAllText(path) == before);
+        Directory.CreateDirectory(path + ".tmp");
+        bool failed = false;
+        try { store.MoveToBoundary(ids[0], 4); } catch (UnauthorizedAccessException) { failed = true; }
+        finally { Directory.Delete(path + ".tmp"); }
+        Assert(failed && store.Presets.Select(p => p.Id).SequenceEqual(expected) && File.ReadAllText(path) == before);
+    }));
 Console.WriteLine($"{passed} checks passed.");

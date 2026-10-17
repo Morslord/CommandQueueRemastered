@@ -1,6 +1,6 @@
 # CommandQueue Remastered
 
-**Beta 0.3.2** — plan Artifact of Command item queues directly in the Risk of Rain 2 scoreboard.
+**Beta 0.3.3** — plan Artifact of Command item queues directly in the Risk of Rain 2 scoreboard.
 
 Build item queues, repeat your preferred picks and save presets without leaving the game's interface.
 
@@ -8,11 +8,12 @@ Build item queues, repeat your preferred picks and save presets without leaving 
 
 - **Scoreboard integration:** switch between the original **Players** overview and **Command Queue** using the game's configured scoreboard key.
 - **Item queues:** add quantities, reorder or split stacks with drag and drop, remove items and clear queues with confirmation.
-- **Automatic Command selection:** selects the next queued item for the essence's actual tier. Empty queues or unavailable next items keep the normal manual selection menu.
+- **Automatic Command selection:** selects the next queued item for the essence's actual tier. Empty queues or unavailable next items normally open the manual selection menu; the exclusive-item setting below provides an optional exception.
+- **Pause:** pause automatic selection independently for each item group without losing quantities or Repeat progress. The Pause button turns orange-yellow when the currently selected group is paused.
 - **Repeat modes:** rotate selected items to the end, or cycle through the planned quantities while keeping the displayed order and counts fixed.
-- **Presets:** save, load, preview, rename and delete queue plans.
+- **Presets:** save, load, preview, rename and delete queue plans. Drag preset rows to reorder them; the order is saved automatically.
 - **Item information:** icons, permanent inventory counters and a scrollable description panel with optional LookingGlass stats.
-- **Configurable special pickups:** choose separate behavior for temporary and ethereal Command items.
+- **Configurable special pickups:** choose separate behavior for temporary and ethereal Command items. Configure six exclusive items to select when queued anywhere or automatically even without a queue entry.
 - **Optional integrations:** RiskOfOptions for in-game settings, LookingGlass for descriptions and ProperSave for run queue persistence.
 
 ## Installation and use
@@ -53,6 +54,10 @@ Matching neighbors within a displayed group merge after moves, removals and Repe
 
 ## Repeat and presets
 
+**Pause** sits between Repeat and Clear group and turns orange-yellow while active. It pauses automatic selection only for the currently selected group, opening normal Command menus for that group while preserving quantities, order and Repeat progress. Other groups continue selecting automatically. Each group has its own pause state; the shared Void group covers all Void tiers. Click again in that group to resume. All group pauses reset at run start/end and are not saved in presets or ProperSave.
+
+Drag a preset row to reorder the list. A cursor label and insertion line show the destination; dragging near the list edges scrolls it. The order is saved immediately and survives restarting the game. Drop outside the list or press Escape to cancel.
+
 Enable **Repeat** for a group to keep using its plan. With `RotateRepeatedItems` enabled, each selected item moves to the end of its tier's queue. With rotation disabled, an internal cursor cycles through the planned quantities while displayed order and counts stay fixed. Editing the queue, changing Repeat settings or mode, or restoring a queue starts a new cycle. Cycle progress is not persisted.
 
 Presets support saving, loading, renaming, deletion and read-only **Preview**. Select a saved row to use its action buttons. Loading replaces only groups containing items in the preset; other groups and their Repeat settings remain intact. An empty preset leaves the queue unchanged.
@@ -79,6 +84,7 @@ With RiskOfOptions installed, use **Settings → MOD OPTIONS → CommandQueue Re
 | `ItemScale` | 1.00x | Scale item icons, range 0.50x–2.00x |
 | `TemporaryItemBehavior` | `ManualMenu` | Handle temporary Command pickups |
 | `EtherealItemBehavior` | `ManualMenu` | Handle ethereal Command pickups |
+| `ExclusiveItemSelection` | `Default` | Select the six exclusive items when queued anywhere; `Automatic` also selects without an entry |
 
 Menu scale is limited by available screen space. Temporary and ethereal items each support these behaviors:
 
@@ -88,7 +94,9 @@ Menu scale is limited by available screen space. Temporary and ethereal items ea
 | `UseQueueWithoutConsuming` | Select the queued item without changing quantities, order or Repeat progress |
 | `UseQueueNormally` | Select and consume from the queue normally |
 
-Selected pickups retain their temporary or ethereal status. An empty queue or unavailable next item opens the normal picker.
+Selected pickups retain their temporary or ethereal status. Normally, an empty queue or unavailable next item opens the normal picker.
+
+`ExclusiveItemSelection` applies to exclusive Command essences offering **Halcyon Seed, Newly Hatched Zoea, Exposed Cerebellum, Encrypted Cerebellum, Prison Matrix or Sentry Key**. `Default` finds the item anywhere in the queue. `Automatic` also selects it without an entry, leaving the queue unchanged in that case. Existing entries follow normal consumption and Repeat rules. Pause, disabled groups and temporary/ethereal policies take priority. Items still drop normally; there is no automatic collection. Queued exclusive items that are not offered by the current essence do not block later normal items of the same tier. Those exclusive entries stay queued for their matching essences. Offered but unavailable items still open the manual menu.
 
 ## Bug reports
 
@@ -101,7 +109,7 @@ See [the build instructions](src/README.md) for requirements, compilation comman
 ## Credits
 
 - [gabrielgad](https://thunderstore.io/c/riskofrain2/p/gabrielgad/CommandQueueExtended/) — CommandQueueExtended.
-- KubeRoot — original CommandQueue project.
+- [KubeRoot](https://thunderstore.io/c/riskofrain2/p/KubeRoot/CommandQueue/) — original CommandQueue project.
 - [KennedyMindsetMovement](https://thunderstore.io/c/riskofrain2/p/KennedyMindsetMovement/ProperSave_CommandQueueExtended/) — ProperSave_CommandQueueExtended, the reference for CommandQueueExtended run queue persistence.
 - [KingEnderBrine / ProperSave](https://thunderstore.io/c/riskofrain2/p/KingEnderBrine/ProperSave/) — optional run save integration.
 - [Rune580 / RiskOfOptions](https://github.com/Rune580/RiskOfOptions) — optional in-game settings UI.
@@ -114,4 +122,3 @@ See [LICENSE](LICENSE) for the GNU General Public License, version 3.
 ## AI disclosure
 
 Generative AI (OpenAI Codex) assisted with the development of this mod and the writing of its documentation. In-game testing and feedback were provided by the maintainer. AI assistance does not guarantee correctness; the validation limits described above apply.
-

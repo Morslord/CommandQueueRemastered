@@ -1,4 +1,4 @@
-# Building CommandQueue Remastered 0.3.2
+# Building CommandQueue Remastered 0.3.3
 
 The mod targets .NET Standard 2.1 and references the installed Risk of Rain 2 1.5.0 assemblies.
 

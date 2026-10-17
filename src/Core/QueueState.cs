@@ -22,6 +22,17 @@ namespace CommandQueueRemastered.Core
         private readonly Func<string, string> groupOf;
         private readonly Dictionary<QueueEntry, int> repeatProgress = new Dictionary<QueueEntry, int>();
         private bool rotateRepeatedItems = true;
+        private readonly HashSet<string> pausedGroups = new HashSet<string>(StringComparer.Ordinal);
+        // Session controls use display groups, so all actual Void tiers share one pause.
+        public bool IsGroupPaused(string group) => group != null && pausedGroups.Contains(group);
+        public bool IsPickupPaused(string pickup) => IsGroupPaused(groupOf(pickup));
+        public void TogglePause(string group)
+        {
+            if (string.IsNullOrWhiteSpace(group)) throw new ArgumentException("Empty group name.", nameof(group));
+            if (!pausedGroups.Remove(group)) pausedGroups.Add(group);
+            // Pausing must not discard stationary Repeat progress in any group.
+            Changed?.Invoke();
+        }
         public bool RotateRepeatedItems
         {
             get => rotateRepeatedItems;
@@ -141,16 +152,31 @@ namespace CommandQueueRemastered.Core
         }
 
         // Selection is scoped to the actual pickup tier, including within the shared Void tab.
-        public int FindHead(string tier, Func<string, string> tierOf, bool resetRepeatCycle = true)
+        public int FindHead(string tier, Func<string, string> tierOf, bool resetRepeatCycle = true,
+            Func<string, bool> eligiblePickup = null)
         {
-            if (RotateRepeatedItems || !IsRepeated(tier)) return entries.FindIndex(entry => tierOf(entry.Pickup) == tier);
-            int next = entries.FindIndex(entry => tierOf(entry.Pickup) == tier &&
+            bool Matches(QueueEntry entry) => tierOf(entry.Pickup) == tier && (eligiblePickup == null || eligiblePickup(entry.Pickup));
+            if (RotateRepeatedItems || !IsRepeated(tier)) return entries.FindIndex(Matches);
+            int next = entries.FindIndex(entry => Matches(entry) &&
                 (!repeatProgress.TryGetValue(entry, out int consumed) || consumed < entry.Count));
             if (next >= 0) return next;
             // Each actual Void tier has its own cycle, even in the combined display.
             if (resetRepeatCycle)
-                foreach (var entry in entries.Where(entry => tierOf(entry.Pickup) == tier)) repeatProgress.Remove(entry);
-            return entries.FindIndex(entry => tierOf(entry.Pickup) == tier);
+                foreach (var entry in entries.Where(Matches)) repeatProgress.Remove(entry);
+            return entries.FindIndex(Matches);
+        }
+
+        // Exclusive essences cycle only entries for the offered pickup, not the whole tier.
+        public int FindPickup(string pickup, string tier, bool resetRepeatCycle = false)
+        {
+            int first = entries.FindIndex(entry => entry.Pickup == pickup);
+            if (first < 0 || RotateRepeatedItems || !IsRepeated(tier)) return first;
+            int next = entries.FindIndex(entry => entry.Pickup == pickup &&
+                (!repeatProgress.TryGetValue(entry, out int consumed) || consumed < entry.Count));
+            if (next >= 0) return next;
+            if (resetRepeatCycle)
+                foreach (var entry in entries.Where(entry => entry.Pickup == pickup)) repeatProgress.Remove(entry);
+            return first;
         }
 
         public void Consume(int index, string tier)
@@ -177,7 +203,7 @@ namespace CommandQueueRemastered.Core
         }
 
         public void Clear() { entries.Clear(); NotifyChanged(); }
-        public void Reset() { entries.Clear(); repeatedTiers.Clear(); NotifyChanged(); }
+        public void Reset() { entries.Clear(); repeatedTiers.Clear(); pausedGroups.Clear(); NotifyChanged(); }
         public List<QueueEntry> Snapshot() => entries.Select(entry => entry.Copy()).ToList();
 
         public void Replace(IEnumerable<QueueEntry> source, IEnumerable<string> repeats = null)

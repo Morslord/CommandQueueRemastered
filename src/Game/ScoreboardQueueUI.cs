@@ -30,6 +30,12 @@ namespace CommandQueueRemastered.Game
         private Image ghostImage;
         private Image ghostVoidMarker;
         private Image repeatImage;
+        private Image pauseImage;
+        private RectTransform presetMarker, presetGhost;
+        private TextMeshProUGUI presetGhostLabel;
+        private readonly List<PresetRowButton> presetRows = new List<PresetRowButton>();
+        private PresetRowButton draggedPreset;
+        private int presetBoundary = -1;
         private RectTransform clearConfirmation;
         private Button cancelClearButton;
         private CanvasGroup panelInput, toolbarInput;
@@ -38,6 +44,7 @@ namespace CommandQueueRemastered.Game
         private static readonly Color NeutralActionColor = new Color(0.16f, 0.19f, 0.24f, 1);
         private static readonly Color RepeatActionColor = new Color(0.19f, 0.32f, 0.23f, 1);
         private static readonly Color ClearActionColor = new Color(0.34f, 0.19f, 0.20f, 1);
+        private static readonly Color PauseActionColor = new Color(0.72f, 0.46f, 0.08f, 1);
         internal bool SuppressPauseShortcut => confirmationEscapeFrame == Time.frameCount ||
             (clearConfirmation && clearConfirmation.gameObject.activeInHierarchy && Input.GetKeyDown(KeyCode.Escape));
         private TMP_InputField nameInput;
@@ -106,12 +113,15 @@ namespace CommandQueueRemastered.Game
             repeatLabel = repeatButton.GetComponentInChildren<TextMeshProUGUI>();
             repeatImage = repeatButton.GetComponent<Image>();
             Place(repeatButton, 0, 0, 0.22f, 1);
+            var pauseButton = Button(actions, "Pause", () => Act(() => { if (!string.IsNullOrEmpty(group)) plugin.Queue.TogglePause(group); }));
+            pauseImage = pauseButton.GetComponent<Image>();
+            Place(pauseButton, 0.23f, 0, 0.45f, 1);
             Place(Button(actions, "Clear group", () => Act(() => plugin.Queue.Replace(
                 plugin.Queue.Entries.Where(entry => ItemGroups.GroupOf(entry.Pickup) != group).Select(entry => entry.Copy()).ToList(),
-                plugin.Queue.RepeatedTiers.ToArray()))), 0.23f, 0, 0.46f, 1);
+                plugin.Queue.RepeatedTiers.ToArray()))), 0.46f, 0, 0.72f, 1);
             var clearButton = Button(actions, "Clear all", OpenClearConfirmation);
             clearButton.GetComponent<Image>().color = ClearActionColor;
-            Place(clearButton, 0.47f, 0, 0.68f, 1);
+            Place(clearButton, 0.73f, 0, 0.99f, 1);
             queueScroll = Scroll(panel, "Queued items", 0.01f, 0.72f, 0.68f, 0.88f, out queueContent);
             var queueGrid = queueContent.gameObject.AddComponent<GridLayoutGroup>();
             queueGrid.spacing = new Vector2(7, 7); queueGrid.padding = new RectOffset(8, 8, 8, 8);
@@ -187,6 +197,18 @@ namespace CommandQueueRemastered.Game
             ghostVoidMarker = ghostStrip.gameObject.AddComponent<Image>(); ghostVoidMarker.raycastTarget = false;
             ghostCount = Label(ghost, "", 20); Place(ghostCount.rectTransform, 0, 0, 1, 0.33f);
             ghostCount.alignment = TextAlignmentOptions.Center; ghost.gameObject.SetActive(false);
+            presetMarker = Rect("Preset insertion marker", saveContent);
+            presetMarker.gameObject.AddComponent<LayoutElement>().ignoreLayout = true;
+            var presetMarkerImage = presetMarker.gameObject.AddComponent<Image>();
+            presetMarkerImage.color = new Color(0.8f, 0.55f, 1f); presetMarkerImage.raycastTarget = false;
+            presetMarker.gameObject.SetActive(false);
+            presetGhost = Box("Dragged preset", root, Vector2.zero, Vector2.zero);
+            presetGhost.anchorMin = presetGhost.anchorMax = new Vector2(0.5f, 0.5f);
+            presetGhost.pivot = new Vector2(0, 1); presetGhost.sizeDelta = new Vector2(300, 48);
+            presetGhost.GetComponent<Image>().raycastTarget = false;
+            presetGhostLabel = Label(presetGhost, "", 17); Stretch(presetGhostLabel.rectTransform);
+            presetGhostLabel.alignment = TextAlignmentOptions.MidlineLeft;
+            presetGhost.gameObject.SetActive(false);
             BuildClearConfirmation();
             plugin.Queue.Changed += MarkDirty;
             ApplyVisibility();
@@ -265,7 +287,7 @@ namespace CommandQueueRemastered.Game
             bool wasAvailable = root.gameObject.activeSelf;
             root.gameObject.SetActive(available);
             if (available && !wasAvailable) dirty = true;
-            if (!available) { CloseClearConfirmation(); panel.gameObject.SetActive(false); RestorePlayers(); ReleaseCursor(); return; }
+            if (!available) { CloseClearConfirmation(); CancelDrag(); panel.gameObject.SetActive(false); RestorePlayers(); ReleaseCursor(); return; }
             if (!cursorOwned && User.eventSystem)
             { cursorSystem = User.eventSystem; cursorSystem.cursorOpenerCount++; cursorOwned = true; }
             if (!queueView) { CloseClearConfirmation(); panel.gameObject.SetActive(false); RestorePlayers(); CancelDrag(); return; }
@@ -293,6 +315,8 @@ namespace CommandQueueRemastered.Game
                 float scale = Mathf.Max(0.1f, Mathf.Min(plugin.MenuScale.Value, (parent.rect.width - 20) / Width, (parent.rect.height - 20) / Height));
                 root.localScale = Vector3.one * scale;
                 if (!panel.gameObject.activeSelf) return;
+                if ((dragged || draggedPreset) && Input.GetKeyDown(KeyCode.Escape))
+                { confirmationEscapeFrame = Time.frameCount; CancelDrag(); }
                 UpdateQueueLayout();
                 string signature = string.Join(",", ItemGroups.Names.Where(plugin.GroupEnabled)) + ":" + plugin.ItemScale.Value;
                 if (signature != settingsSignature) { dirty = true; settingsSignature = signature; }
@@ -309,9 +333,14 @@ namespace CommandQueueRemastered.Game
                     }
                     UpdateDrag(Input.mousePosition);
                 }
+                if (draggedPreset)
+                {
+                    AutoScrollPresets(Input.mousePosition);
+                    UpdatePresetDrag(Input.mousePosition);
+                }
                 if (Time.unscaledTime < nextRefresh) return;
                 nextRefresh = Time.unscaledTime + 0.2f;
-                if (dirty && !dragged) { Rebuild(); dirty = false; }
+                if (dirty && !dragged && !draggedPreset) { Rebuild(); dirty = false; }
                 foreach (var tile in tiles.ToArray()) if (tile && tile.Item) tile.Refresh();
                 foreach (var tile in previewIcons) if (tile) tile.Refresh();
                 UpdateDescription();
@@ -342,11 +371,14 @@ namespace CommandQueueRemastered.Game
             var queueGrid = queueContent.GetComponent<GridLayoutGroup>();
             queueGrid.cellSize = grid.cellSize; queueGrid.constraintCount = grid.constraintCount;
             foreach (var item in ItemGroups.Available(group)) CreateTile(itemContent, item, null);
-            foreach (Transform child in saveContent) { child.gameObject.SetActive(false); Destroy(child.gameObject); }
+            foreach (var row in presetRows) if (row) { row.gameObject.SetActive(false); Destroy(row.gameObject); }
+            presetRows.Clear();
             if (SelectedSave == null) selectedSaveId = null;
             foreach (var preset in plugin.Presets.Presets)
             {
-                var row = Button(saveContent, "", () => SelectSave(preset.Id));
+                var row = Button(saveContent, "", () => SelectSave(preset.Id), presetRow: true);
+                var rowButton = row.GetComponent<PresetRowButton>();
+                rowButton.Initialize(this, preset.Id); presetRows.Add(rowButton);
                 row.name = "Preset " + preset.Name;
                 row.gameObject.AddComponent<LayoutElement>().preferredHeight = 48;
                 row.GetComponent<Image>().color = preset.Id == selectedSaveId
@@ -362,6 +394,7 @@ namespace CommandQueueRemastered.Game
             bool repeating = tiers.Length > 0 && tiers.All(plugin.Queue.IsRepeated);
             repeatLabel.text = repeating ? "Repeat: on" : "Repeat: off";
             repeatImage.color = repeating ? RepeatActionColor : NeutralActionColor;
+            pauseImage.color = plugin.Queue.IsGroupPaused(group) ? PauseActionColor : NeutralActionColor;
             if (!clearConfirmation.gameObject.activeSelf && User?.eventSystem && tiles.Count > 0)
             {
                 var selected = User.eventSystem.currentSelectedGameObject;
@@ -587,8 +620,74 @@ namespace CommandQueueRemastered.Game
         private void CancelDrag()
         {
             dragged = null; dropBoundary = -1;
+            draggedPreset = null; presetBoundary = -1;
+            if (presetGhost) presetGhost.gameObject.SetActive(false);
+            if (presetMarker) presetMarker.gameObject.SetActive(false);
             if (ghost) ghost.gameObject.SetActive(false); if (marker) marker.gameObject.SetActive(false);
         }
+
+        internal void BeginPresetDrag(PresetRowButton row, PointerEventData data)
+        {
+            if (data.button != PointerEventData.InputButton.Left || plugin.presetsReadFailed ||
+                clearConfirmation.gameObject.activeSelf) return;
+            CancelDrag();
+            draggedPreset = row; saveScroll.StopMovement();
+            var preset = plugin.Presets.Presets.FirstOrDefault(candidate => candidate.Id == row.PresetId);
+            if (preset == null) { CancelDrag(); return; }
+            presetGhostLabel.text = "<noparse>" + preset.Name + "</noparse>";
+            presetGhost.gameObject.SetActive(true); presetGhost.SetAsLastSibling();
+            UpdatePresetDrag(data.position);
+        }
+        private void AutoScrollPresets(Vector2 pointer)
+        {
+            if (!RectTransformUtility.RectangleContainsScreenPoint(saveScroll.viewport, pointer, EventCamera) ||
+                saveContent.rect.height <= saveScroll.viewport.rect.height) return;
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(saveScroll.viewport, pointer, EventCamera, out var local);
+            float edge = Mathf.Min(24, saveScroll.viewport.rect.height / 4);
+            float direction = local.y > saveScroll.viewport.rect.yMax - edge ? 1 :
+                local.y < saveScroll.viewport.rect.yMin + edge ? -1 : 0;
+            saveScroll.verticalNormalizedPosition = Mathf.Clamp01(saveScroll.verticalNormalizedPosition + direction * Time.unscaledDeltaTime);
+        }
+        internal void UpdatePresetDrag(Vector2 pointer)
+        {
+            if (!draggedPreset) return;
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(root, pointer, EventCamera, out var local);
+            presetGhost.anchoredPosition = local + new Vector2(18, -18);
+            presetBoundary = -1; presetMarker.gameObject.SetActive(false);
+            if (!RectTransformUtility.RectangleContainsScreenPoint(saveScroll.viewport, pointer, EventCamera) || presetRows.Count == 0) return;
+            Canvas.ForceUpdateCanvases();
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(saveContent, pointer, EventCamera, out var position);
+            int boundary = 0;
+            foreach (var row in presetRows)
+            {
+                var rect = (RectTransform)row.transform;
+                float center = rect.localPosition.y + rect.rect.center.y;
+                if (position.y > center) break;
+                boundary++;
+            }
+            presetBoundary = boundary;
+            var target = (RectTransform)presetRows[Math.Min(boundary, presetRows.Count - 1)].transform;
+            float y = target.localPosition.y + (boundary < presetRows.Count ? target.rect.yMax : target.rect.yMin);
+            presetMarker.anchorMin = presetMarker.anchorMax = new Vector2(0, 1);
+            presetMarker.pivot = new Vector2(0, 0.5f);
+            presetMarker.sizeDelta = new Vector2(saveContent.rect.width - 12, 3);
+            presetMarker.anchoredPosition = new Vector2(6, y - saveContent.rect.yMax);
+            presetMarker.SetAsLastSibling(); presetMarker.gameObject.SetActive(true);
+        }
+        internal void EndPresetDrag(PointerEventData data)
+        {
+            if (!draggedPreset) return;
+            UpdatePresetDrag(data.position);
+            string id = draggedPreset.PresetId;
+            int boundary = presetBoundary;
+            CancelDrag();
+            if (boundary >= 0) Act(() =>
+            {
+                if (plugin.presetsReadFailed) throw new InvalidOperationException("Preset writes are disabled after a read failure.");
+                plugin.Presets.MoveToBoundary(id, boundary);
+            });
+        }
+        internal void ScrollPresets(PointerEventData data) => saveScroll.OnScroll(data);
 
         private static RectTransform Rect(string name, Transform parent)
         {
@@ -621,10 +720,11 @@ namespace CommandQueueRemastered.Game
             label.color = Color.white; label.raycastTarget = false; label.alignment = TextAlignmentOptions.TopLeft;
             return label;
         }
-        private RectTransform Button(Transform parent, string text, Action action)
+        private RectTransform Button(Transform parent, string text, Action action, bool presetRow = false)
         {
             var rect = Rect(text, parent); var image = rect.gameObject.AddComponent<Image>(); image.color = new Color(0.16f, 0.19f, 0.24f, 1);
-            var button = rect.gameObject.AddComponent<Button>(); button.targetGraphic = image; button.onClick.AddListener(() => action());
+            Button button = presetRow ? rect.gameObject.AddComponent<PresetRowButton>() : rect.gameObject.AddComponent<Button>();
+            button.targetGraphic = image; button.onClick.AddListener(() => action());
             var label = Label(rect, text, 17); Stretch(label.rectTransform); label.alignment = TextAlignmentOptions.Center;
             return rect;
         }
@@ -680,6 +780,24 @@ namespace CommandQueueRemastered.Game
             if (horizontal) fit.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             else fit.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
         }
+    }
+
+    internal sealed class PresetRowButton : Button, IBeginDragHandler, IDragHandler, IEndDragHandler, IScrollHandler
+    {
+        private ScoreboardQueueUI owner;
+        private bool wasDragged;
+        internal string PresetId { get; private set; }
+        internal void Initialize(ScoreboardQueueUI ui, string id) { owner = ui; PresetId = id; }
+        public override void OnPointerDown(PointerEventData data) { wasDragged = false; base.OnPointerDown(data); }
+        public override void OnPointerClick(PointerEventData data) { if (!wasDragged) base.OnPointerClick(data); wasDragged = false; }
+        public void OnBeginDrag(PointerEventData data)
+        {
+            if (data.button != PointerEventData.InputButton.Left) return;
+            wasDragged = true; owner.BeginPresetDrag(this, data);
+        }
+        public void OnDrag(PointerEventData data) => owner.UpdatePresetDrag(data.position);
+        public void OnEndDrag(PointerEventData data) => owner.EndPresetDrag(data);
+        public void OnScroll(PointerEventData data) { owner.ScrollPresets(data); data.Use(); }
     }
 
     // Preview tiles are read-only: clicking them cannot enqueue or change a saved stack.

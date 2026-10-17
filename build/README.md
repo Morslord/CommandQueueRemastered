@@ -1,6 +1,6 @@
 # CommandQueue Remastered
 
-**Beta 0.3.2** — plan your Artifact of Command picks directly in the Risk of Rain 2 scoreboard.
+**Beta 0.3.3** — plan your Artifact of Command picks directly in the Risk of Rain 2 scoreboard.
 
 Build item queues, repeat your preferred picks and save presets without leaving the game's interface. Remastered combines the functionality of CommandQueueExtended, CommandQueueExtendedIconFix and ProperSave_CommandQueueExtended in one mod.
 
@@ -10,18 +10,19 @@ Build item queues, repeat your preferred picks and save presets without leaving 
 
 - **Scoreboard integration:** switch between the original **Players** overview and **Command Queue** using the game's configured scoreboard key.
 - **Item queues:** add quantities, reorder or split stacks with drag and drop, remove items and clear queues with confirmation.
-- **Automatic Command selection:** selects the next queued item for the essence's actual tier. Empty queues or unavailable next items keep the normal manual selection menu.
+- **Automatic Command selection:** selects the next queued item for the essence's actual tier. Empty queues or unavailable next items normally open the manual selection menu; the exclusive-item setting below provides an optional exception.
+- **Pause:** pause automatic selection independently for each item group without losing quantities or Repeat progress. The Pause button turns orange-yellow when the currently selected group is paused.
 - **Repeat modes:** rotate selected items to the end, or cycle through the planned quantities while keeping the displayed order and counts fixed.
-- **Presets:** save, load, preview, rename and delete queue plans.
+- **Presets:** save, load, preview, rename and delete queue plans. Drag preset rows to reorder them; the order is saved automatically.
 - **Item information:** icons, permanent inventory counters and a scrollable description panel with optional LookingGlass stats.
-- **Configurable special pickups:** choose separate behavior for temporary and ethereal Command items.
+- **Configurable special pickups:** choose separate behavior for temporary and ethereal Command items. Configure six exclusive items to select when queued anywhere or automatically even without a queue entry.
 - **Optional integrations:** RiskOfOptions for in-game settings, LookingGlass for descriptions and ProperSave for run queue persistence.
 
 Groups appear in this order: **White, Green, Red, Lunar, Boss, Void, Hallowed, Hex, Pages**. Void items share one tab and show rarity color strips; automatic selection and Repeat remain separate for each actual Void tier.
 
 ## Installation
 
-Install with r2modman or another Thunderstore-compatible mod manager. **BepInExPack must be installed.**
+Install with r2modman or another Thunderstore-compatible mod manager. **BepInExPack and SeekersPatcher must be installed.**
 
 Disable or remove these older mods from the same profile before using Remastered:
 
@@ -57,6 +58,8 @@ The **Players** button returns to the original scoreboard overview. Keyboard and
 | Drag a queued item | Move the whole stack |
 | Shift + drag | Move half the stack, rounded down |
 | Ctrl + drag | Move one item |
+| Click Pause | Pause or resume automatic selection for the currently selected group |
+| Drag a preset row | Reorder presets and save the new order |
 
 Ctrl takes priority over Shift when removing or dragging. Matching neighboring items within a group merge after moves, removals and Repeat rotation. A full stack remains separate from any overflow; quantities are preserved.
 
@@ -65,6 +68,10 @@ Hover over an item to read its description. If the text is too long, use the mou
 Inventory counters show **permanent owned items**, excluding temporary and ethereal stacks. Queue badges show planned quantities instead.
 
 ## Repeat and presets
+
+**Pause**, between Repeat and Clear group, pauses automatic selection only for the currently selected group. It turns orange-yellow when that group is paused. Essences for paused groups open their normal selection menus; other groups continue selecting automatically. Each group keeps its own pause state, including all Void tiers together in the shared Void tab. Queue quantities, order and Repeat progress remain intact. Click again in the group to resume. All group pauses reset at run start/end and are not stored in presets or ProperSave.
+
+Drag preset rows to change their order. A cursor label and insertion line show the destination; the list scrolls when dragging near its edges. Order is saved immediately and retained after restarting. Drop outside the list or press Escape to cancel. Selection and preview stay with their preset.
 
 Enable **Repeat** for the selected group to keep using its plan. With **RotateRepeatedItems** enabled, each selected item moves to the end and stacks with a matching neighbor. With rotation disabled, the queue cycles through every planned quantity while its displayed order and counts stay fixed. Editing the queue or restoring it starts a new cycle.
 
@@ -88,6 +95,7 @@ With RiskOfOptions installed, open **Settings → MOD OPTIONS → CommandQueue R
 | General | ItemScale | 1.00x, range 0.50x–2.00x |
 | Special items | TemporaryItemBehavior | ManualMenu |
 | Special items | EtherealItemBehavior | ManualMenu |
+| Special items | ExclusiveItemSelection | Default |
 
 Menu scale affects the whole interface and is limited by the available screen space. Item scale adjusts icon size separately.
 
@@ -99,7 +107,9 @@ Temporary and ethereal pickups each have these choices:
 | UseQueueWithoutConsuming | Select the queued item without changing quantities, order or Repeat progress |
 | UseQueueNormally | Select and consume from the queue normally |
 
-The selected item's temporary or ethereal status is preserved. An empty queue or unavailable next item opens the normal picker.
+The selected item's temporary or ethereal status is preserved. Normally, an empty queue or unavailable next item opens the normal picker.
+
+**ExclusiveItemSelection** applies to exclusive Command essences offering **Halcyon Seed, Newly Hatched Zoea, Exposed Cerebellum, Encrypted Cerebellum, Prison Matrix or Sentry Key**. **Default** requires the item anywhere in the queue. **Automatic** selects it even without an entry. Existing entries follow consumption/Repeat rules; without an entry, the queue stays unchanged. Pause, disabled groups and temporary/ethereal policies take priority. Selected items still drop normally; automatic collection is not included. Queued exclusive items that are not offered by the current essence do not block later normal items of the same tier. Those exclusive entries stay queued for their matching essences. Offered but unavailable items still open the manual menu.
 
 ## Beta status and feedback
 
@@ -112,8 +122,12 @@ When reporting a problem, include the mod and game versions, steps to reproduce 
 ## Credits
 
 - [gabrielgad](https://thunderstore.io/c/riskofrain2/p/gabrielgad/CommandQueueExtended/) — CommandQueueExtended.
-- KubeRoot — original CommandQueue project.
+- [KubeRoot](https://thunderstore.io/c/riskofrain2/p/KubeRoot/CommandQueue/) — original CommandQueue project.
 - [KennedyMindsetMovement](https://thunderstore.io/c/riskofrain2/p/KennedyMindsetMovement/ProperSave_CommandQueueExtended/) — ProperSave_CommandQueueExtended, the reference for CommandQueueExtended run queue persistence.
 - [KingEnderBrine / ProperSave](https://thunderstore.io/c/riskofrain2/p/KingEnderBrine/ProperSave/) — optional run save integration.
 - [Rune580 / RiskOfOptions](https://github.com/Rune580/RiskOfOptions) — optional in-game settings UI.
 - [Wet-Boys / LookingGlass](https://github.com/Wet-Boys/LookingGlass/) — optional enhanced item descriptions.
+
+## AI disclosure
+
+Generative AI (OpenAI Codex) assisted with the development of this mod and the writing of its documentation. In-game testing and feedback were provided by the maintainer. AI assistance does not guarantee correctness; the validation limits described above apply.

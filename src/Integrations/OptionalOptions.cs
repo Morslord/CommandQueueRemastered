@@ -19,6 +19,7 @@ namespace CommandQueueRemastered.Integrations
             RegisterEntry(plugin, assembly, "SliderOption", "SliderConfig", plugin.ItemScale);
             RegisterEntry(plugin, assembly, "ChoiceOption", "ChoiceConfig", plugin.TemporaryItemBehavior);
             RegisterEntry(plugin, assembly, "ChoiceOption", "ChoiceConfig", plugin.EtherealItemBehavior);
+            RegisterEntry(plugin, assembly, "ChoiceOption", "ChoiceConfig", plugin.ExclusiveItemSelection);
             RegisterIcon(plugin, assembly);
         }
         private static void RegisterEntry(RemasteredPlugin plugin, Assembly assembly, string optionName, string configName, ConfigEntryBase entry)

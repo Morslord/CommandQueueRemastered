@@ -25,7 +25,7 @@ namespace CommandQueueRemastered
     {
         public const string Guid = "local.commandqueue.remastered";
         public const string Name = "CommandQueue Remastered";
-        public const string Version = "0.3.2";
+        public const string Version = "0.3.3";
         internal const float ItemIconBaseSize = 51.2f;
         internal static RemasteredPlugin Instance;
         internal readonly QueueState Queue = new QueueState(ItemGroups.GroupOf);
@@ -34,6 +34,7 @@ namespace CommandQueueRemastered
         internal ConfigEntry<bool> RotateRepeatedItems;
         internal ConfigEntry<float> ItemScale, MenuScale;
         internal ConfigEntry<SpecialPickupBehavior> TemporaryItemBehavior, EtherealItemBehavior;
+        internal ConfigEntry<ExclusiveItemBehavior> ExclusiveItemSelection;
         internal Sprite ModIcon;
         internal Texture2D ModIconTexture;
         private Harmony harmony;
@@ -68,6 +69,8 @@ namespace CommandQueueRemastered
                 const string specialDescription = "ManualMenu: open the normal picker. UseQueueWithoutConsuming: select the tier's current queued item without changing quantities, order or Repeat progress. UseQueueNormally: select and consume normally. Missing or unavailable queued items open the normal picker.";
                 TemporaryItemBehavior = Config.Bind("Special items", "TemporaryItemBehavior", SpecialPickupBehavior.ManualMenu, "Behavior for timed temporary Command pickups. " + specialDescription);
                 EtherealItemBehavior = Config.Bind("Special items", "EtherealItemBehavior", SpecialPickupBehavior.ManualMenu, "Behavior for ethereal Command pickups. " + specialDescription);
+                ExclusiveItemSelection = Config.Bind("Special items", "ExclusiveItemSelection", ExclusiveItemBehavior.Default,
+                    "Halcyon Seed, Newly Hatched Zoea, Exposed Cerebellum, Encrypted Cerebellum, Prison Matrix and Sentry Key: Default selects from their exclusive Command essence when queued at any position. Automatic also selects without a queue entry. Existing entries follow normal consumption and Repeat rules. Pause and temporary/ethereal policies take priority. No automatic collection.");
                 MenuScale = Config.Bind("General", "MenuScale", 1f,
                     new ConfigDescription("Queue menu scale; capped to fit the screen. Default: 1.0x.", new AcceptableValueRange<float>(0.5f, 2f)));
                 ItemScale = Config.Bind("General", "ItemScale", 1f, new ConfigDescription("Item button scale. 1.0x uses the compact 51.2-unit base size.", new AcceptableValueRange<float>(0.5f, 2f)));
@@ -156,7 +159,26 @@ namespace CommandQueueRemastered
             var prefabPicker = cube ? cube.GetComponent<PickupPickerController>() : null;
             // Do not select from printers, scrappers, rebirth, delusion or unrelated choice windows.
             if (!prefabPicker || picker.panelPrefab != prefabPicker.panelPrefab || picker.isDelusionChoice || picker.isRebirthChoice) return false;
-            var options = picker.options.Select(option =>
+            var options = SelectionOptions(picker);
+            string sourceTier = SourceTier(picker);
+            int optionIndex = FindSelection(options, sourceTier);
+            if (options.Any(option => ItemGroups.GroupOfTier(option.Tier) == "Void"))
+                LogInfo("Void command essence: source tier=" + (sourceTier ?? "not received") +
+                    "; option tiers=" + string.Join(",", options.Select(option => option.Tier).Where(tier => tier != null).Distinct()) +
+                    "; queue choice=" + (optionIndex < 0 ? "manual menu" : options[optionIndex].Pickup + " (" + options[optionIndex].Tier + ")") + ".");
+            if (optionIndex < 0) return false;
+            var selected = options[optionIndex];
+            bool exclusive = CommandSelection.IsExclusiveEssence(options, ItemGroups.IsExclusivePickup);
+            int head = SelectionHead(options, selected.Tier);
+            var entry = head < 0 ? null : Queue.Entries[head];
+            var behavior = SelectionBehavior(picker.options[optionIndex].pickup);
+            pendingSelections.Add(picker);
+            try { StartCoroutine(SubmitNextFrame(picker, optionIndex, selected.Pickup, selected.Tier, user, prompt, camera, behavior, exclusive, entry)); }
+            catch { pendingSelections.Remove(picker); throw; }
+            return true;
+        }
+
+        private CommandOption[] SelectionOptions(PickupPickerController picker) => picker.options.Select(option =>
             {
                 var pickup = PickupCatalog.GetPickupDef(option.pickup.pickupIndex);
                 var item = pickup == null ? null : ItemCatalog.GetItemDef(pickup.itemIndex);
@@ -164,25 +186,20 @@ namespace CommandQueueRemastered
                     option.available && item && GroupEnabled(ItemGroups.Group(item)) &&
                     SelectionBehavior(option.pickup) != SpecialPickupBehavior.ManualMenu);
             }).ToArray();
+        private static string SourceTier(PickupPickerController picker)
+        {
             var source = PickupCatalog.GetPickupDef(picker.GetPickupIndex());
             var sourceItem = source == null ? null : ItemCatalog.GetItemDef(source.itemIndex);
-            string sourceTier = sourceItem ? sourceItem.tier.ToString() : null;
-            int optionIndex = CommandSelection.FindOption(Queue, options, sourceTier, ItemGroups.TierOf);
-            if (options.Any(option => ItemGroups.GroupOfTier(option.Tier) == "Void"))
-                LogInfo("Void command essence: source tier=" + (sourceTier ?? "not received") +
-                    "; option tiers=" + string.Join(",", options.Select(option => option.Tier).Where(tier => tier != null).Distinct()) +
-                    "; queue choice=" + (optionIndex < 0 ? "manual menu" : options[optionIndex].Pickup + " (" + options[optionIndex].Tier + ")") + ".");
-            if (optionIndex < 0) return false;
-            var selected = options[optionIndex];
-            var behavior = SelectionBehavior(picker.options[optionIndex].pickup);
-            pendingSelections.Add(picker);
-            try { StartCoroutine(SubmitNextFrame(picker, optionIndex, selected.Pickup, selected.Tier, user, prompt, camera, behavior)); }
-            catch { pendingSelections.Remove(picker); throw; }
-            return true;
+            return sourceItem ? sourceItem.tier.ToString() : null;
         }
+        private int FindSelection(CommandOption[] options, string sourceTier) => CommandSelection.FindOption(
+            Queue, options, sourceTier, ItemGroups.TierOf, ItemGroups.IsExclusivePickup, ExclusiveItemSelection.Value);
+        private int SelectionHead(CommandOption[] options, string tier, bool resetRepeatCycle = false) =>
+            CommandSelection.FindQueueEntry(Queue, options, tier, ItemGroups.TierOf, ItemGroups.IsExclusivePickup, resetRepeatCycle);
 
         private IEnumerator SubmitNextFrame(PickupPickerController picker, int optionIndex, string pickup, string tier,
-            LocalUser user, NetworkUIPromptController prompt, CameraRigController camera, SpecialPickupBehavior behavior)
+            LocalUser user, NetworkUIPromptController prompt, CameraRigController camera, SpecialPickupBehavior behavior,
+            bool exclusive, QueueEntry plannedEntry)
         {
             yield return null;
             bool submitted = false;
@@ -190,14 +207,18 @@ namespace CommandQueueRemastered
             {
                 // A cancelled interaction must not submit a stale choice or reopen its panel.
                 if (!picker || !InteractionActive(prompt, user)) yield break;
-                int head = Queue.FindHead(tier, ItemGroups.TierOf, resetRepeatCycle: false);
-                if (head < 0 || Queue.Entries[head].Pickup != pickup || picker.options == null || optionIndex >= picker.options.Length ||
+                if (Queue.IsPickupPaused(pickup) || picker.options == null || optionIndex >= picker.options.Length ||
                     !picker.options[optionIndex].available || PickupCatalog.GetPickupDef(picker.options[optionIndex].pickup.pickupIndex)?.internalName != pickup) yield break;
+                var options = SelectionOptions(picker);
+                if (FindSelection(options, SourceTier(picker)) != optionIndex ||
+                    CommandSelection.IsExclusiveEssence(options, ItemGroups.IsExclusivePickup) != exclusive || options[optionIndex].Tier != tier) yield break;
+                int head = SelectionHead(options, tier);
+                if (!ReferenceEquals(plannedEntry, head < 0 ? null : Queue.Entries[head])) yield break;
                 if (SelectionBehavior(picker.options[optionIndex].pickup) != behavior || !GroupEnabled(ItemGroups.GroupOf(pickup))) yield break;
-                if (behavior == SpecialPickupBehavior.UseQueueNormally) head = Queue.FindHead(tier, ItemGroups.TierOf);
+                if (behavior == SpecialPickupBehavior.UseQueueNormally && head >= 0) head = SelectionHead(options, tier, true);
                 picker.SubmitChoice(optionIndex);
                 submitted = true;
-                SpecialPickupPolicy.CompleteSelection(Queue, head, tier, behavior);
+                if (head >= 0) SpecialPickupPolicy.CompleteSelection(Queue, head, tier, behavior);
             }
             catch (Exception exception) { LogError("Automatic command selection failed; queue retained where possible", exception); }
             finally
