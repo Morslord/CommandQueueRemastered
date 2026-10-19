@@ -25,7 +25,7 @@ namespace CommandQueueRemastered
     {
         public const string Guid = "local.commandqueue.remastered";
         public const string Name = "CommandQueue Remastered";
-        public const string Version = "0.3.4";
+        public const string Version = "0.4.0";
         internal const float ItemIconBaseSize = 51.2f;
         internal static RemasteredPlugin Instance;
         internal readonly QueueState Queue = new QueueState(ItemGroups.GroupOf);
@@ -36,6 +36,13 @@ namespace CommandQueueRemastered
         internal ConfigEntry<float> ItemScale, MenuScale;
         internal ConfigEntry<SpecialPickupBehavior> TemporaryItemBehavior, EtherealItemBehavior;
         internal ConfigEntry<ExclusiveItemBehavior> ExclusiveItemSelection;
+        internal ConfigEntry<bool> AutoCollectQueuedItems;
+        internal ConfigEntry<bool> AutoPickupCommandEssence, ExcludePausedPlayers;
+        private PausedPlayerSync pausedPlayerSync;
+        private float autoPickupRetryAfter;
+        private int lastEssenceWorkFrame = -1;
+        internal ConfigEntry<InventoryCountMode> FewestItemsCount;
+        internal readonly Dictionary<ItemTier, ConfigEntry<EssenceDropMode>> EssenceDropModes = new Dictionary<ItemTier, ConfigEntry<EssenceDropMode>>();
         internal Sprite ModIcon;
         internal Texture2D ModIconTexture;
         private Harmony harmony;
@@ -44,7 +51,7 @@ namespace CommandQueueRemastered
         private readonly HashSet<PickupPickerController> manualDisplays = new HashSet<PickupPickerController>();
         private static readonly System.Reflection.MethodInfo localParticipantGetter =
             AccessTools.PropertyGetter(typeof(NetworkUIPromptController), "currentLocalParticipant");
-        private static bool InteractionActive(NetworkUIPromptController prompt, LocalUser user) =>
+        internal static bool InteractionActive(NetworkUIPromptController prompt, LocalUser user) =>
             prompt && user != null && ReferenceEquals(localParticipantGetter.Invoke(prompt, null), user);
         private readonly List<ScoreboardQueueUI> scoreboardViews = new List<ScoreboardQueueUI>();
         private float nextScoreboardScan;
@@ -64,19 +71,33 @@ namespace CommandQueueRemastered
             {
                 foreach (string group in ItemGroups.Names)
                     GroupOptions.Add(group, Config.Bind("Groups", group, true, "Enable the " + group + " queue group."));
-                RotateRepeatedItems = Config.Bind("General", "RotateRepeatedItems", true, "Move collected repeated items to the queue end. When disabled, keep displayed order and quantities while cycling through every queued item internally.");
+                RotateRepeatedItems = Config.Bind("General", "RotateRepeatedItems", true, "Move collected repeated items to the queue end.\n\nWhen disabled, keep displayed order and quantities while cycling through every queued item internally.");
+                AutoCollectQueuedItems = BindAutoCollectOption();
+                AutoPickupCommandEssence = Config.Bind("General", "AutoPickupCommandEssence", false,
+                    "Automatically open nearby Command essences when your active queue has a matching item.\n\nEmpty or paused queues are left alone.\n\nUses normal interaction range; does not collect the selected item unless AutoCollectQueuedItems is enabled.");
+                ExcludePausedPlayers = Config.Bind("General", "ExcludePausedPlayers", false,
+                    "Skip players whose queue group is paused when distributing essences.\n\nOther groups can still receive drops.\n\nHost setting. Remote players need the updated mod to share their pause state; unknown states remain eligible.\n\nIf everyone is excluded, keep the original drop location.");
+                FewestItemsCount = Config.Bind("Essence drops", "FewestItemsCount", InventoryCountMode.AllItems,
+                    "AllItems: count permanent stacks across all items.\n\nSameTier: count permanent stacks only in the essence's actual tier.\n\nTemporary and ethereal items do not count.\n\nHost setting; ties rotate per tier.");
+                foreach (ItemTier tier in Enum.GetValues(typeof(ItemTier)))
+                {
+                    if (ItemGroups.Group(tier) == null) continue;
+                    string tierLabel = OptionsPresentation.Name("Essence drops", tier.ToString());
+                    EssenceDropModes[tier] = Config.Bind("Essence drops", tier.ToString(), EssenceDropMode.Original,
+                        "Command item essence location for " + tierLabel + ".\n\nOriginal: keep the source location.\n\nRoundRobin: alternate between living players.\n\nKiller: use the killing player (including owned minions).\n\nFewestItems: use FewestItemsCount.\n\nMissing/dead killer or non-kill source falls back to RoundRobin; no living players keeps the original drop.\n\nApplies to all Command item droplet sources, not equipment. Actual Void tiers are independent.\n\nHost/server setting, applies immediately; no client installation needed for relocation.");
+                }
                 BlockGameplayInput = Config.Bind("General", "BlockGameplayInput", GameplayInputBlocking.On,
-                    "On: block gameplay in both scoreboard views. CommandQueueOnly: block only in Command Queue, allow gameplay in Players. Off: allow gameplay in both views, including while clicking, hovering, typing or confirming. UI actions can also trigger gameplay. The actual pause menu retains native control. Applies immediately.");
+                    "On: block gameplay in both scoreboard views.\n\nCommandQueueOnly: block only in Command Queue, allow gameplay in Players.\n\nOff: allow gameplay in both views, including while clicking, hovering, typing or confirming. UI actions can also trigger gameplay.\n\nThe actual pause menu retains native control. Applies immediately.");
                 Queue.RotateRepeatedItems = RotateRepeatedItems.Value;
                 RotateRepeatedItems.SettingChanged += (_, __) => Queue.RotateRepeatedItems = RotateRepeatedItems.Value;
-                const string specialDescription = "ManualMenu: open the normal picker. UseQueueWithoutConsuming: select the tier's current queued item without changing quantities, order or Repeat progress. UseQueueNormally: select and consume normally. Missing or unavailable queued items open the normal picker.";
-                TemporaryItemBehavior = Config.Bind("Special items", "TemporaryItemBehavior", SpecialPickupBehavior.ManualMenu, "Behavior for timed temporary Command pickups. " + specialDescription);
-                EtherealItemBehavior = Config.Bind("Special items", "EtherealItemBehavior", SpecialPickupBehavior.ManualMenu, "Behavior for ethereal Command pickups. " + specialDescription);
+                const string specialDescription = "ManualMenu: open the normal picker.\n\nUseQueueWithoutConsuming: select the tier's current queued item without changing quantities, order or Repeat progress.\n\nUseQueueNormally: select and consume normally.\n\nMissing or unavailable queued items open the normal picker.";
+                TemporaryItemBehavior = Config.Bind("Special items", "TemporaryItemBehavior", SpecialPickupBehavior.ManualMenu, "Behavior for timed temporary Command pickups.\n\n" + specialDescription);
+                EtherealItemBehavior = Config.Bind("Special items", "EtherealItemBehavior", SpecialPickupBehavior.ManualMenu, "Behavior for ethereal Command pickups.\n\n" + specialDescription);
                 ExclusiveItemSelection = Config.Bind("Special items", "ExclusiveItemSelection", ExclusiveItemBehavior.Default,
-                    "Halcyon Seed, Newly Hatched Zoea, Exposed Cerebellum, Encrypted Cerebellum, Prison Matrix and Sentry Key: Default selects from their exclusive Command essence when queued at any position. Automatic also selects without a queue entry. Existing entries follow normal consumption and Repeat rules. Pause and temporary/ethereal policies take priority. No automatic collection.");
+                    "Halcyon Seed, Newly Hatched Zoea, Exposed Cerebellum, Encrypted Cerebellum, Prison Matrix and Sentry Key.\n\nDefault: select from their exclusive Command essence when queued at any position.\n\nAutomatic: also select without a queue entry.\n\nExisting entries follow normal consumption and Repeat rules.\n\nPause and temporary/ethereal policies take priority. AutoCollectQueuedItems applies only when an existing queue entry is used.");
                 MenuScale = Config.Bind("General", "MenuScale", 1f,
-                    new ConfigDescription("Queue menu scale; capped to fit the screen. Default: 1.0x.", new AcceptableValueRange<float>(0.5f, 2f)));
-                ItemScale = Config.Bind("General", "ItemScale", 1f, new ConfigDescription("Item button scale. 1.0x uses the compact 51.2-unit base size.", new AcceptableValueRange<float>(0.5f, 2f)));
+                    new ConfigDescription("Queue menu scale; capped to fit the screen.\n\nDefault: 1.0x.", new AcceptableValueRange<float>(0.5f, 2f)));
+                ItemScale = Config.Bind("General", "ItemScale", 1f, new ConfigDescription("Item button scale.\n\n1.0x uses the compact 51.2-unit base size.", new AcceptableValueRange<float>(0.5f, 2f)));
                 Presets = new PresetStore(System.IO.Path.Combine(Paths.ConfigPath, "commandQueueRemastered.presets.json"));
                 try { Presets.Load(); }
                 catch (Exception exception) { Logger.LogError("Preset file could not be loaded; existing file retained: " + exception); presetsReadFailed = true; }
@@ -95,6 +116,7 @@ namespace CommandQueueRemastered
                 LookingGlassCommandCompatibility.Register(harmony, this);
                 Run.onRunStartGlobal += OnRunStart;
                 Run.onRunDestroyGlobal += OnRunEnd;
+                pausedPlayerSync = new PausedPlayerSync(this);
                 OptionalOptions.Register(this);
                 properSave = new ProperSaveAdapter(this);
                 properSave.Initialize();
@@ -108,6 +130,24 @@ namespace CommandQueueRemastered
             }
         }
         internal bool presetsReadFailed;
+        private ConfigEntry<bool> BindAutoCollectOption()
+        {
+            bool save = Config.SaveOnConfigSet;
+            ConfigEntry<bool> result;
+            try
+            {
+                Config.SaveOnConfigSet = false;
+                var previous = Config.Bind("Item collection", "AutoCollectQueuedItems", false, "Moved to General.");
+                bool existing = previous.Value;
+                Config.Remove(previous.Definition);
+                result = Config.Bind("General", "AutoCollectQueuedItems", existing,
+                    "Automatically collect the item selected from your queue.\n\nWithout this option, the selected item drops on the ground.\n\nIn multiplayer, enable this on both the host and your client.");
+            }
+            finally { Config.SaveOnConfigSet = save; }
+            if (save) Config.Save();
+            return result;
+        }
+        internal bool PlayerPaused(CharacterMaster master, string group) => pausedPlayerSync?.IsPaused(master, group) ?? false;
         internal void LogError(string context, Exception exception) => Logger.LogError(context + ": " + exception);
         internal void LogInfo(string message) => Logger.LogInfo(message);
         internal void LogWarning(string message) => Logger.LogWarning(message);
@@ -124,6 +164,21 @@ namespace CommandQueueRemastered
         {
             AttachScoreboards();
             properSave?.Update();
+            pausedPlayerSync?.Update();
+            FastAssignedEssence.Process();
+        }
+        private void FixedUpdate()
+        {
+            // Physics catch-up may run multiple ticks in one rendered frame. Keep the same work cap.
+            if (lastEssenceWorkFrame == Time.frameCount) return;
+            lastEssenceWorkFrame = Time.frameCount;
+            if (Time.unscaledTime < autoPickupRetryAfter) return;
+            try { TryPickupEssence(); }
+            catch (Exception exception)
+            {
+                autoPickupRetryAfter = Time.unscaledTime + 5f;
+                LogError("Automatic essence interaction failed; normal interaction remains available", exception);
+            }
         }
         private void AttachScoreboards()
         {
@@ -140,16 +195,27 @@ namespace CommandQueueRemastered
                 catch (Exception exception) { view.DisableAfterFailure(); LogError("Scoreboard initialization failed", exception); }
             }
         }
-        private void OnRunStart(Run run) { Queue.Reset(); pendingSelections.Clear(); }
-        private void OnRunEnd(Run run) { Queue.Reset(); pendingSelections.Clear(); }
+        private void OnRunStart(Run run) { Queue.Reset(); pendingSelections.Clear(); ResetDrops(); pausedPlayerSync?.Reset(); }
+        private void OnRunEnd(Run run) { Queue.Reset(); pendingSelections.Clear(); ResetDrops(); pausedPlayerSync?.Reset(); }
+        private static void ResetDrops()
+        {
+            EssenceDrops.Distribution.Reset();
+            EssenceDrops.Killer = null;
+            AutomaticCollection.Selecting.Clear();
+            FastAssignedEssence.Reset();
+            EssenceWorkRegistry.ResetInteractions();
+        }
         private void OnDestroy()
         {
             foreach (var view in scoreboardViews) if (view) Destroy(view);
             scoreboardViews.Clear();
             properSave?.Dispose();
+            pausedPlayerSync?.Dispose();
             Run.onRunStartGlobal -= OnRunStart;
             Run.onRunDestroyGlobal -= OnRunEnd;
             harmony?.UnpatchSelf();
+            ResetDrops();
+            EssenceWorkRegistry.Clear();
             if (ModIcon) Destroy(ModIcon);
             if (ModIconTexture) Destroy(ModIconTexture);
             if (Instance == this) Instance = null;
@@ -182,6 +248,49 @@ namespace CommandQueueRemastered
             try { StartCoroutine(SubmitNextFrame(picker, optionIndex, selected.Pickup, selected.Tier, user, prompt, camera, behavior, exclusive, entry)); }
             catch { pendingSelections.Remove(picker); throw; }
             return true;
+        }
+
+        private bool HasQueuedChoice(PickupPickerController picker)
+        {
+            if (!AutomaticCollection.IsCommand(picker) || picker.options == null) return false;
+            var options = SelectionOptions(picker);
+            return CommandSelection.HasQueuedChoice(Queue, options, SourceTier(picker), ItemGroups.TierOf,
+                ItemGroups.IsExclusivePickup, ExclusiveItemSelection.Value);
+        }
+        private void TryPickupEssence()
+        {
+            if (AutoPickupCommandEssence == null || !AutoPickupCommandEssence.Value || !Run.instance ||
+                Time.timeScale <= 0 || Queue.Entries.Count == 0 || pendingSelections.Count != 0) return;
+            foreach (var user in LocalUserManager.readOnlyLocalUsersList)
+            {
+                var body = user.cachedBody;
+                if (!body || !body.healthComponent || !body.healthComponent.alive || user.isUIFocused || EssenceWorkRegistry.Busy(user)) continue;
+                var interactor = body.GetComponent<Interactor>();
+                if (!interactor) continue;
+                int visits = Math.Min(EssenceWorkRegistry.DistanceBudget, EssenceWorkRegistry.Candidates.Count);
+                int choices = 0;
+                for (int i = 0; i < visits && choices < EssenceWorkRegistry.ChoiceBudget; i++)
+                {
+                    if (!EssenceWorkRegistry.Candidates.TryVisit(out var candidate)) break;
+                    var picker = candidate.Picker;
+                    if (!picker) { EssenceWorkRegistry.Candidates.Remove(candidate); continue; }
+                    if (!picker.isActiveAndEnabled || Time.unscaledTime < candidate.RetryAt) continue;
+                    var collider = candidate.Collider;
+                    float rangeSquared = interactor.maxInteractionDistance * interactor.maxInteractionDistance;
+                    if (collider && (!collider.enabled || collider.bounds.SqrDistance(body.corePosition) > rangeSquared)) continue;
+                    // Use current geometry: OnEnable can precede final positioning/scaling.
+                    Vector3 nearest = collider ? collider.ClosestPoint(body.corePosition) : picker.transform.position;
+                    if ((nearest - body.corePosition).sqrMagnitude > rangeSquared) continue;
+                    choices++;
+                    if (!HasQueuedChoice(picker) || picker.GetInteractability(interactor) != Interactability.Available ||
+                        // The center can lie behind terrain while the near surface remains reachable.
+                        Physics.Linecast(body.corePosition, nearest, LayerIndex.world.mask, QueryTriggerInteraction.Ignore)) continue;
+                    candidate.RetryAt = Time.unscaledTime + 1f;
+                    EssenceWorkRegistry.Request(user);
+                    interactor.AttemptInteraction(picker.gameObject);
+                    break;
+                }
+            }
         }
 
         private CommandOption[] SelectionOptions(PickupPickerController picker) => picker.options.Select(option =>
@@ -222,7 +331,7 @@ namespace CommandQueueRemastered
                 if (!ReferenceEquals(plannedEntry, head < 0 ? null : Queue.Entries[head])) yield break;
                 if (SelectionBehavior(picker.options[optionIndex].pickup) != behavior || !GroupEnabled(ItemGroups.GroupOf(pickup))) yield break;
                 if (behavior == SpecialPickupBehavior.UseQueueNormally && head >= 0) head = SelectionHead(options, tier, true);
-                picker.SubmitChoice(optionIndex);
+                AutomaticCollection.Submit(picker, prompt, optionIndex, head >= 0);
                 submitted = true;
                 if (head >= 0) SpecialPickupPolicy.CompleteSelection(Queue, head, tier, behavior);
             }

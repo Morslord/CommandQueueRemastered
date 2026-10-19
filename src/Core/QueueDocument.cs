@@ -112,8 +112,8 @@ namespace CommandQueueRemastered.Core
             string temporary = path + ".tmp";
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             bool completed = legacyImportCompleted || completeLegacyImport;
-            File.WriteAllText(temporary, JsonStorage.Encode(new PresetFile
-                { Version = 1, Presets = updated, LegacyImportCompleted = completed }));
+            File.WriteAllText(temporary, new PresetFile
+                { Version = 1, Presets = updated, LegacyImportCompleted = completed }.EncodeForFile());
             if (File.Exists(path)) File.Replace(temporary, path, path + ".bak");
             else File.Move(temporary, path);
             presets = updated;
@@ -126,6 +126,16 @@ namespace CommandQueueRemastered.Core
         public int Version { get; set; }
         public List<QueuePreset> Presets { get; set; }
         public bool LegacyImportCompleted { get; set; }
+        public string EncodeForFile()
+        {
+            // Keep the versioned container and import marker; only the preset array gains line breaks.
+            const string newline = "\r\n";
+            var lines = new List<string>();
+            foreach (var preset in Presets) lines.Add(JsonStorage.Encode(preset));
+            return "{" + newline + "\"Version\":" + Version + "," + newline +
+                "\"LegacyImportCompleted\":" + (LegacyImportCompleted ? "true" : "false") + "," + newline +
+                "\"Presets\":[" + newline + string.Join("," + newline, lines) + newline + "]" + newline + "}" + newline;
+        }
     }
 
     internal static class JsonStorage

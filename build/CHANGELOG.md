@@ -1,8 +1,17 @@
+## VERSION 0.4.0
+
+- Add per-tier Command essence distribution: Original (default), RoundRobin, Killer and FewestItems, with independent Void tiers. Missing eligible killers fall back to round robin; with no eligible players, drops retain their original location.
+- Add FewestItemsCount: count permanent item stacks across all items or only the matching item tier. Ties rotate between players.
+- Add AutoPickupCommandEssence (default off, General): automatically open nearby unobstructed essences only when an active queue contains an available matching entry. Respect interaction range, menus, pause and special-item settings.
+- Add AutoCollectQueuedItems (default off, General): collect items selected using a queue entry, preserving pickup status and Repeat rules. Multiplayer requires support and activation on both host and selecting client.
+- Add ExcludePausedPlayers (default off, General): exclude players whose matching queue group is paused from distribution. Updated clients report pause states; unknown or stale states remain eligible.
+- Queue complete assigned-drop data and create essences at the recipient's current position, limited to 30 per second with at least 1/30 second between deliveries and no catch-up bursts. Bound automatic pickup processing during large drop waves and use current essence geometry for proximity and line-of-sight checks.
+- Integrate distribution and collection settings with RiskOfOptions, using Item Distribution, Special Items, consistent White/Green/Red and Void rarity labels, and readable description paragraphs.
+- Format preset files with one compact preset per line, preserving contents and legacy import status.
+
 ## VERSION 0.3.4
 
 - Add BlockGameplayInput in General settings and RiskOfOptions with three choices: On (default, block both scoreboard views), CommandQueueOnly (block Command Queue while allowing gameplay in Players), and Off (allow gameplay in both views). Changes and view switches apply immediately.
-- Fix controls becoming blocked after clicking or hovering scoreboard buttons, including buffered jump and sprint inputs. In unblocked views, gameplay stays active while typing preset names or confirming Clear all. UI actions can also trigger gameplay actions; the actual pause menu and normal cursor/camera behavior remain in effect.
-- Restore the credit link to KubeRoot's original CommandQueue in both READMEs.
 
 ## VERSION 0.3.3
 

@@ -16,6 +16,13 @@ namespace CommandQueueRemastered.Core
 
     public static class CommandSelection
     {
+        // Automatic essence interaction requires a real queue entry, even in exclusive Automatic mode.
+        public static bool HasQueuedChoice(QueueState queue, IReadOnlyList<CommandOption> options, string sourceTier,
+            Func<string, string> tierOf, Func<string, bool> isExclusive, ExclusiveItemBehavior behavior)
+        {
+            int option = FindOption(queue, options, sourceTier, tierOf, isExclusive, behavior);
+            return option >= 0 && FindQueueEntry(queue, options, options[option].Tier, tierOf, isExclusive) >= 0;
+        }
         // The essence decides the tier. Display grouping and option ordering must never decide it.
         public static int FindOption(QueueState queue, IReadOnlyList<CommandOption> options, string sourceTier,
             Func<string, string> tierOf, Func<string, bool> isExclusive = null,

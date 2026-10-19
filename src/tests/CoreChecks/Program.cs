@@ -750,6 +750,298 @@ Check("Unexpected button-buffer layouts fail explicitly instead of partially cha
     catch (InvalidOperationException) { rejected = true; }
     Assert(rejected);
 });
+Check("Essence distribution keeps original drops and handles no living recipients", () =>
+{
+    var distribution = new EssenceDistribution();
+    var players = new[] { new DropCandidate(1, 3), new DropCandidate(2, 7) };
+    Assert(distribution.Choose("Tier1", EssenceDropMode.Original, players, 1) == null);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, Array.Empty<DropCandidate>(), null) == null);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, players, null) == 1);
+});
+Check("Round robin is deterministic and independent for every actual tier", () =>
+{
+    var distribution = new EssenceDistribution();
+    var players = new[] { new DropCandidate(7, 0), new DropCandidate(2, 0) };
+    foreach (string tier in new[] { "Tier1", "Tier2", "Tier3", "Lunar", "Boss", "VoidTier1", "VoidTier2", "VoidTier3", "VoidBoss", "Cursed", "Hex", "Page" })
+    {
+        Assert(distribution.Choose(tier, EssenceDropMode.RoundRobin, players, null) == 2);
+        Assert(distribution.Choose(tier, EssenceDropMode.RoundRobin, players, null) == 7);
+        Assert(distribution.Choose(tier, EssenceDropMode.RoundRobin, players, null) == 2);
+    }
+});
+Check("Distribution survives departures, joins, a sole survivor and a new run", () =>
+{
+    var distribution = new EssenceDistribution();
+    var players = new[] { new DropCandidate(2, 0), new DropCandidate(7, 0) };
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, players, null) == 2);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, new[] { new DropCandidate(3, 0), new DropCandidate(7, 0) }, null) == 3);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, new[] { new DropCandidate(7, 0) }, null) == 7);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, players, null) == 2);
+    distribution.Reset();
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, players, null) == 2);
+});
+Check("Killer must be an eligible living player and otherwise falls back to rotation", () =>
+{
+    var distribution = new EssenceDistribution();
+    var players = new[] { new DropCandidate(2, 6), new DropCandidate(7, 1) };
+    Assert(distribution.Choose("Boss", EssenceDropMode.Killer, players, 7) == 7);
+    Assert(distribution.Choose("Boss", EssenceDropMode.Killer, players, 99) == 2);
+    Assert(distribution.Choose("Boss", EssenceDropMode.Killer, players, null) == 7);
+});
+Check("Fewest items follows permanent counts, rotates ties and reevaluates inventories", () =>
+{
+    var distribution = new EssenceDistribution();
+    var players = new[] { new DropCandidate(2, 9), new DropCandidate(7, 3), new DropCandidate(9, 3) };
+    Assert(distribution.Choose("Tier1", EssenceDropMode.FewestItems, players, 2) == 7);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.FewestItems, players, 2) == 9);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.FewestItems, players, 2) == 7);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.FewestItems, new[] { new DropCandidate(2, 1), new DropCandidate(7, 3) }, null) == 2);
+});
+Check("Preset formatting writes one compact preset per CRLF line without changing data or import status", () =>
+{
+    string directory = Path.Combine(Path.GetTempPath(), "remastered-format-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        string path = Path.Combine(directory, "presets.json");
+        var store = new PresetStore(path);
+        var queue = new QueueState(); queue.Enqueue("item", 5); queue.ToggleRepeat("Tier1");
+        store.Add("Quoted \"name\" with \\ slash and\nnewline ä", queue);
+        queue.Enqueue("other", 2); store.Add("Second", queue);
+        var ids = store.Presets.Select(preset => preset.Id).ToArray();
+        string source = Path.Combine(directory, "legacy.txt"); File.WriteAllText(source, "");
+        store.ImportLegacy(source);
+        string json = File.ReadAllText(path);
+        var presetLines = json.Split(new[] { "\r\n" }, StringSplitOptions.None).Where(line => line.StartsWith("{" ) && line.Length > 1).ToArray();
+        Assert(presetLines.Length == 2 && presetLines[0].EndsWith(",") && !presetLines[1].EndsWith(","));
+        Assert(json.Replace("\r\n", "").IndexOf('\n') == -1);
+        var restored = new PresetStore(path); restored.Load();
+        Assert(restored.Presets.Select(preset => preset.Id).SequenceEqual(ids));
+        Assert(restored.Presets[0].Name == store.Presets[0].Name);
+        Assert(restored.Presets[0].Document.Encode() == store.Presets[0].Document.Encode());
+        File.WriteAllText(source, "invalid legacy data must not be reimported");
+        Assert(restored.ImportLegacy(source) == 0);
+        restored.Delete(ids[0]); restored.Delete(ids[1]);
+        var empty = new PresetStore(path); empty.Load(); Assert(empty.Presets.Count == 0 && empty.ImportLegacy(source) == 0);
+    }
+    finally { Directory.Delete(directory, true); }
+});
+
+Check("Queued collection authorization is single-use and bound to participant, option and expiry", () =>
+{
+    var valid = new QueuedCollectionTicket(7, 3, 12);
+    Assert(valid.TryConsume(7, 3, 11));
+    Assert(!valid.TryConsume(7, 3, 11));
+    var changedParticipant = new QueuedCollectionTicket(7, 3, 12);
+    Assert(!changedParticipant.TryConsume(8, 3, 11));
+    Assert(!changedParticipant.TryConsume(7, 3, 11));
+    var changedOption = new QueuedCollectionTicket(7, 3, 12);
+    Assert(!changedOption.TryConsume(7, 4, 11));
+    Assert(!changedOption.TryConsume(7, 3, 11));
+    var stale = new QueuedCollectionTicket(7, 3, 12);
+    Assert(!stale.TryConsume(7, 3, 12.1f));
+});
+
+Check("Paused recipients are excluded only when the host enables the option", () =>
+{
+    var players = new[] { new DropCandidate(1, 0, true), new DropCandidate(2, 8) };
+    foreach (var mode in new[] { EssenceDropMode.RoundRobin, EssenceDropMode.Killer, EssenceDropMode.FewestItems })
+    {
+        var distribution = new EssenceDistribution();
+        Assert(distribution.Choose("Tier1", mode, players, 1, false) == 1);
+        Assert(distribution.Choose("Tier1", mode, players, 1, true) == 2);
+    }
+});
+Check("All paused recipients retain the original drop and resuming restores eligibility", () =>
+{
+    var distribution = new EssenceDistribution();
+    foreach (var mode in new[] { EssenceDropMode.RoundRobin, EssenceDropMode.Killer, EssenceDropMode.FewestItems })
+        Assert(distribution.Choose("Tier1", mode, new[] { new DropCandidate(1, 0, true) }, 1, true) == null);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, new[] { new DropCandidate(1, 0) }, null, true) == 1);
+});
+Check("Pause masks preserve independent groups and the shared Void pause", () =>
+{
+    var groups = new[] { "White", "Green", "Red", "Lunar", "Boss", "Void", "Hallowed", "Hex", "Pages" };
+    var queue = new QueueState(); queue.TogglePause("White"); queue.TogglePause("Void");
+    uint mask = QueuePauseMask.Capture(groups, queue.IsGroupPaused);
+    Assert(QueuePauseMask.IsPaused(groups, "White", mask));
+    Assert(QueuePauseMask.IsPaused(groups, "Void", mask));
+    Assert(!QueuePauseMask.IsPaused(groups, "Green", mask));
+    Assert(!QueuePauseMask.IsPaused(groups, "unknown", mask));
+    queue.Reset(); Assert(QueuePauseMask.Capture(groups, queue.IsGroupPaused) == 0);
+});
+Check("Remote pauses are bound to sender connection, expire and clear on run reset", () =>
+{
+    var states = new RemoteQueuePauseStatus(); var owner = new object();
+    Assert(!states.IsPaused(1, owner, 0, 0));
+    states.Set(1, owner, 1u << 5, 10);
+    Assert(states.IsPaused(1, owner, 5, 11));
+    Assert(!states.IsPaused(1, owner, 0, 11));
+    Assert(!states.IsPaused(1, new object(), 5, 11));
+    Assert(!states.IsPaused(2, owner, 5, 11));
+    Assert(!states.IsPaused(1, owner, 5, 16));
+    Assert(!states.IsPaused(1, owner, -1, 11));
+    states.Set(1, owner, 0, 12); Assert(!states.IsPaused(1, owner, 5, 13));
+    states.Set(1, owner, 1u << 5, 14); states.Reset(); Assert(!states.IsPaused(1, owner, 5, 14));
+});
+
+Check("Automatic essence interaction requires an available queued choice and respects pause", () =>
+{
+    var queue = new QueueState(_ => "Boss");
+    var options = new[] { new CommandOption("seed", "Boss", true) };
+    bool CanOpen() => CommandSelection.HasQueuedChoice(queue, options, "Boss", _ => "Boss", name => name == "seed", ExclusiveItemBehavior.Automatic);
+    Assert(!CanOpen()); // Exclusive Automatic alone must not open an essence.
+    queue.Enqueue("normal"); Assert(!CanOpen());
+    queue.Enqueue("seed"); Assert(CanOpen());
+    queue.TogglePause("Boss"); Assert(!CanOpen());
+    queue.TogglePause("Boss"); Assert(CanOpen());
+    options[0] = new CommandOption("seed", "Boss", false); Assert(!CanOpen());
+    Assert(queue.Entries.Count == 2 && queue.Entries.All(entry => entry.Count == 1));
+});
+
+Check("Eighteen simultaneous drops drain in bounded batches without loss or duplicates", () =>
+{
+    var work = new BoundedWorkQueue<object>();
+    var drops = Enumerable.Range(0, 18).Select(_ => new object()).ToArray();
+    foreach (var drop in drops) { work.Add(drop); work.Add(drop); }
+    var completed = new System.Collections.Generic.List<object>();
+    var batchCounts = new System.Collections.Generic.List<int>();
+    while (work.Count > 0)
+    {
+        int before = completed.Count;
+        int drained = work.Drain(4, drop => { Assert(work.Remove(drop) == false); completed.Add(drop); });
+        Assert(drained <= 4 && completed.Count - before == drained);
+        batchCounts.Add(drained);
+    }
+    Assert(batchCounts.SequenceEqual(new[] { 4, 4, 4, 4, 2 }));
+    Assert(completed.SequenceEqual(drops));
+});
+Check("Forty drops remain reachable while bounded spawning and automatic selections overlap", () =>
+{
+    var pending = new BoundedWorkQueue<object>();
+    var live = new BoundedWorkQueue<object>();
+    var drops = Enumerable.Range(0, 40).Select(_ => new object()).ToArray();
+    foreach (var drop in drops) pending.Add(drop);
+    var completed = new System.Collections.Generic.HashSet<object>();
+    // A selection finishes later than spawning. Remaining candidates must stay registered.
+    for (int step = 0; step < 80; step++)
+    {
+        Assert(pending.Drain(1, drop => live.Add(drop, prioritize: true)) <= 1);
+        if (step % 2 == 0 && live.TryVisit(out var selected))
+        {
+            Assert(completed.Add(selected)); Assert(live.Remove(selected));
+        }
+    }
+    Assert(pending.Count == 0 && live.Count == 0 && completed.SetEquals(drops));
+});
+Check("A large live set can be visited in constant-size batches with prompt new-spawn priority", () =>
+{
+    var work = new BoundedWorkQueue<object>();
+    var old = Enumerable.Range(0, 10000).Select(_ => new object()).ToArray();
+    foreach (var item in old) work.Add(item);
+    for (int i = 0; i < 32; i++) { Assert(work.TryVisit(out var item) && item == old[i]); }
+    var recent = new object(); work.Add(recent, prioritize: true);
+    Assert(work.TryVisit(out var first) && first == recent);
+    Assert(work.TryVisit(out var resumed) && resumed == old[32]);
+    Assert(work.Count == 10001);
+});
+Check("Live essence visits remain fair when next/current nodes disappear or are re-enabled", () =>
+{
+    var work = new BoundedWorkQueue<object>();
+    var a = new object(); var b = new object(); var c = new object();
+    work.Add(a); work.Add(b); work.Add(c);
+    Assert(work.TryVisit(out var first) && first == a);
+    Assert(work.Remove(b)); Assert(work.Remove(a));
+    Assert(work.TryVisit(out var remaining) && remaining == c);
+    work.Add(b); Assert(work.TryVisit(out var next) && next == c);
+    Assert(work.TryVisit(out next) && next == b);
+    work.Clear(); Assert(work.Count == 0 && !work.TryVisit(out _));
+    work.Add(a); Assert(work.TryVisit(out next) && next == a);
+});
+Check("Callback cancellation leaves no queued work and does not overreport processing", () =>
+{
+    var work = new BoundedWorkQueue<object>();
+    for (int i = 0; i < 18; i++) work.Add(new object());
+    Assert(work.Drain(4, _ => work.Clear()) == 1);
+    Assert(work.Count == 0 && work.Drain(4, _ => { throw new Exception(); }) == 0);
+});
+Check("Fifty stored drop payloads survive delayed creation and allow only one delivery per frame", () =>
+{
+    var work = new DeferredWorkQueue<(int Id, string Pickup, int Flags)>();
+    for (int i = 0; i < 50; i++) work.Add((i, "pickup-" + i, i % 4));
+    for (int frame = 0; frame < 50; frame++)
+    {
+        Assert(work.TryBegin(frame, frame, out var drop));
+        Assert(drop == (frame, "pickup-" + frame, frame % 4));
+        Assert(work.Count == 50 - frame); // Data stays owned until creation completes.
+        Assert(!work.TryBegin(frame, frame, out _));
+        Assert(work.Complete()); Assert(!work.TryBegin(frame, frame, out _));
+        Assert(!work.TryBegin(frame, frame, out _)); // Multiple physics ticks in the same rendered frame.
+    }
+    Assert(work.Count == 0 && !work.TryBegin(50, 50, out _));
+});
+Check("A failed deferred creation retains its complete payload and FIFO position for retry", () =>
+{
+    var work = new DeferredWorkQueue<string>(); work.Add("first:temporary:chest"); work.Add("second:permanent");
+    Assert(work.TryBegin(10, 10, out var first)); work.Retry();
+    Assert(work.Count == 2 && !work.TryBegin(10, 10, out _));
+    Assert(work.TryBegin(11, 11, out var retry) && retry == first); Assert(work.Complete());
+    Assert(work.TryBegin(12, 12, out var second) && second == "second:permanent"); Assert(work.Complete());
+    Assert(work.Count == 0);
+});
+Check("Reset cancels deferred creation safely during callbacks and allows a new run", () =>
+{
+    var work = new DeferredWorkQueue<string>(); work.Add("old");
+    Assert(work.TryBegin(25, 25, out _)); work.Clear(); Assert(!work.Complete()); work.Retry();
+    Assert(work.Count == 0); work.Add("new");
+    Assert(work.TryBegin(0, 0, out var entry) && entry == "new"); Assert(work.Complete());
+});
+Check("Drop delivery keeps at least a thirtieth of a second between requests at different frame rates", () =>
+{
+    const double interval = 1.0 / 30;
+    foreach (int fps in new[] { 30, 60, 120, 240 })
+    {
+        var work = new DeferredWorkQueue<int>(interval);
+        for (int i = 0; i < 50; i++) work.Add(i);
+        var times = new System.Collections.Generic.List<double>();
+        for (int frame = 0; frame < fps * 5; frame++)
+        {
+            double now = (double)frame / fps;
+            if (!work.TryBegin(frame, now, out var value)) continue;
+            Assert(value == times.Count); times.Add(now); Assert(work.Complete());
+            Assert(!work.TryBegin(frame, now, out _));
+        }
+        Assert(times.Count == 50 && work.Count == 0);
+        for (int i = 1; i < times.Count; i++) Assert(times[i] - times[i - 1] >= interval - 1e-12);
+        Assert(times.Count(time => time < 1 - 1e-9) <= 30);
+    }
+});
+Check("Frame hitches and retry never bypass the delivery interval; a new run resets it", () =>
+{
+    var work = new DeferredWorkQueue<string>(1.0 / 30); work.Add("first"); work.Add("second");
+    Assert(work.TryBegin(0, 0, out _)); work.Retry();
+    Assert(!work.TryBegin(1, 0.01, out _));
+    Assert(work.TryBegin(2, 10, out var first) && first == "first"); Assert(work.Complete());
+    Assert(!work.TryBegin(3, 10.001, out _)); // No burst after ten seconds of stalled processing.
+    Assert(work.TryBegin(4, 10.04, out var second) && second == "second"); Assert(work.Complete());
+    work.Clear(); work.Add("new run"); Assert(work.TryBegin(0, 0, out _)); Assert(work.Complete());
+    Throws(() => new DeferredWorkQueue<string>(-1));
+    Throws(() => new DeferredWorkQueue<string>(double.NaN));
+});
+Check("Options use consistent distribution and special-item labels without changing stored keys", () =>
+{
+    Assert(OptionsPresentation.Category("Essence drops") == "Item Distribution");
+    Assert(OptionsPresentation.Category("Special items") == "Special Items");
+    Assert(OptionsPresentation.Category("General") == "General");
+    var keys = new[] { "Tier1", "Tier2", "Tier3", "VoidTier1", "VoidTier2", "VoidTier3", "VoidBoss" };
+    var names = new[] { "White", "Green", "Red", "VoidWhite", "VoidGreen", "VoidRed", "VoidBoss" };
+    for (int i = 0; i < keys.Length; i++)
+    {
+        Assert(OptionsPresentation.Name("Essence drops", keys[i]) == names[i]);
+        Assert(OptionsPresentation.Name("Other mod", keys[i]) == keys[i]);
+    }
+});
+
 Console.WriteLine($"{passed} checks passed.");
 
 sealed class InputBufferFixture

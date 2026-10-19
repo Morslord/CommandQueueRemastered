@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Reflection;
 using BepInEx.Configuration;
+using CommandQueueRemastered.Core;
 using UnityEngine;
 
 namespace CommandQueueRemastered.Integrations
@@ -21,6 +22,12 @@ namespace CommandQueueRemastered.Integrations
             RegisterEntry(plugin, assembly, "ChoiceOption", "ChoiceConfig", plugin.TemporaryItemBehavior);
             RegisterEntry(plugin, assembly, "ChoiceOption", "ChoiceConfig", plugin.EtherealItemBehavior);
             RegisterEntry(plugin, assembly, "ChoiceOption", "ChoiceConfig", plugin.ExclusiveItemSelection);
+            RegisterEntry(plugin, assembly, "CheckBoxOption", "CheckBoxConfig", plugin.AutoCollectQueuedItems);
+            RegisterEntry(plugin, assembly, "CheckBoxOption", "CheckBoxConfig", plugin.AutoPickupCommandEssence);
+            RegisterEntry(plugin, assembly, "CheckBoxOption", "CheckBoxConfig", plugin.ExcludePausedPlayers);
+            RegisterEntry(plugin, assembly, "ChoiceOption", "ChoiceConfig", plugin.FewestItemsCount);
+            foreach (var entry in plugin.EssenceDropModes.Values)
+                RegisterEntry(plugin, assembly, "ChoiceOption", "ChoiceConfig", entry);
             RegisterIcon(plugin, assembly);
         }
         private static void RegisterEntry(RemasteredPlugin plugin, Assembly assembly, string optionName, string configName, ConfigEntryBase entry)
@@ -29,8 +36,9 @@ namespace CommandQueueRemastered.Integrations
             {
                 Type configurationType = assembly.GetType("RiskOfOptions.OptionConfigs." + configName, true);
                 object configuration = Activator.CreateInstance(configurationType);
-                Set(configuration, "name", entry.Definition.Key);
-                Set(configuration, "category", entry.Definition.Section);
+                string displayName = OptionsPresentation.Name(entry.Definition.Section, entry.Definition.Key);
+                Set(configuration, "name", displayName);
+                Set(configuration, "category", OptionsPresentation.Category(entry.Definition.Section));
                 Set(configuration, "description", entry.Description.Description);
                 Set(configuration, "restartRequired", false);
                 if (entry == plugin.ItemScale) { Set(configuration, "min", 0.5f); Set(configuration, "max", 2f); Set(configuration, "formatString", "{0:0.00}x"); }

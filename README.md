@@ -1,6 +1,8 @@
 # CommandQueue Remastered
 
-**Beta 0.3.4** — plan Artifact of Command item queues directly in the Risk of Rain 2 scoreboard.
+**Beta 0.4.0** — plan Artifact of Command item queues directly in the Risk of Rain 2 scoreboard.
+
+Development build for branch testing. Gameplay and multiplayer testing is incomplete; some essences can remain on the ground while moving.
 
 Build item queues, repeat your preferred picks and save presets without leaving the game's interface.
 
@@ -16,8 +18,12 @@ Build item queues, repeat your preferred picks and save presets without leaving 
 - **Item information:** icons, permanent inventory counters and a scrollable description panel with optional LookingGlass stats.
 - **Configurable special pickups:** choose separate behavior for temporary and ethereal Command items. Configure six exclusive items to select when queued anywhere or automatically even without a queue entry.
 - **Optional integrations:** RiskOfOptions for in-game settings, LookingGlass for descriptions and ProperSave for run queue persistence.
+- **Essence locations:** choose the original drop location, round robin, killer or fewest permanent items independently for each actual item tier.
+- **Optional item collection:** collect automatically selected queued items through native item-transfer orbs. Manual choices and selections without a queue entry retain normal drops.
 
 ## Installation and use
+
+Essence relocation is controlled by the host/server; clients do not need this mod to see relocated essences. Automatic collection requires Remastered 0.4.0 or newer and `AutoCollectQueuedItems` enabled on both the host and selecting client. On older/unmodded hosts, queued selection retains normal drops. These multiplayer paths still require in-game validation.
 
 Use a game profile with BepInExPack and SeekersPatcher installed. Place the compiled DLL in that profile's `BepInEx/plugins/` directory.
 
@@ -87,6 +93,31 @@ With RiskOfOptions installed, use **Settings → MOD OPTIONS → CommandQueue Re
 | `TemporaryItemBehavior` | `ManualMenu` | Handle temporary Command pickups |
 | `EtherealItemBehavior` | `ManualMenu` | Handle ethereal Command pickups |
 | `ExclusiveItemSelection` | `Default` | Select the six exclusive items when queued anywhere; `Automatic` also selects without an entry |
+| `AutoCollectQueuedItems` | Disabled | Collect only automatic selections using an existing queue entry |
+| `AutoPickupCommandEssence` | Disabled | Open nearby essences automatically when an active queue has a matching item |
+| `ExcludePausedPlayers` | Disabled | Host: skip players whose matching queue group is paused |
+| `FewestItemsCount` | `AllItems` | Count permanent stacks across all items, or only `SameTier` |
+| Item Distribution: one mode per actual tier | `Original` | `Original`, `RoundRobin`, `Killer` or `FewestItems` |
+
+Essence drop modes apply to Command item droplets from all sources; equipment and non-Command drops retain their original locations. Settings use actual tier names (`Tier1` = White, `Tier2` = Green, `Tier3` = Red, `Cursed` = Hallowed); all four Void tiers have independent choices. Round robin uses living player characters, ordered by stable network ID, and resets each run. Killer includes owned minions; unavailable/dead killers and sources without a kill context fall back to round robin. Delayed boss rewards without a live kill context use this fallback. With no living players, the original location is retained. Essences remain shared and unreserved; relocation does not automatically open them.
+
+FewestItems counts permanent stack quantities, excluding temporary/ethereal items. Choose `AllItems` or `SameTier`. Ties rotate independently per actual tier. Inventory is evaluated for each drop; uncollected essences are not counted as owned items. These are host settings and update immediately.
+
+`AutoCollectQueuedItems` defaults off. Only a successful automatic selection with an existing queue entry is collected. Use AutoPickupCommandEssence to also open matching nearby essences automatically. Manual choices, empty/unavailable queues, paused groups and exclusive Automatic choices without an entry keep their normal behavior. Collection preserves temporary/ethereal status and the existing consumption/Repeat policies, including selection without consumption.
+
+Preset files retain the versioned container and legacy import status, with one compact preset per line for easier manual editing.
+
+Assigned drops wait as complete pickup data until delivery. The host leaves at least 1/30 second between deliveries (at most 30 per second), never creates more than one per rendered frame, and does not catch up with a burst after a frame hitch, using the recipient's current position and the native Command conversion. Waiting drops do not depend on live droplet objects. If the recipient is gone, the drop uses its original position and normal physics. Original-location drops keep their normal flight.
+
+AutoPickup registers live essences when they appear and removes them when disabled. Each local player checks at most 32 candidate distances and four nearby choices per processing step, beginning at most one interaction. New essences receive priority; older candidates are visited in rotation. Full-scene essence/prompt searches and global distance sorting are avoided. Queue, pause, normal range, line of sight and next-frame selection validation remain active. Actual frame-time impact and fast movement in multiplayer still require in-game testing.
+
+RiskOfOptions categories are **Item Distribution** and **Special Items**, with **VoidWhite**, **VoidGreen** and **VoidRed** matching the basic rarity names. Descriptions separate behavior choices with blank lines. Existing configuration sections/keys retain their names and values.
+
+The three collection/distribution switches are under **General**. `AutoCollectQueuedItems` automatically collects the item selected from your queue; otherwise it drops on the ground. In multiplayer, enable it on both host and selecting client. Existing values from the former Item collection category are retained.
+
+`AutoPickupCommandEssence` opens a nearby essence using normal interaction range, only if an active queue has an available matching entry. It leaves empty, paused, disabled or unavailable queues alone, including exclusive Automatic selections without a queue entry. It does not interact through world geometry or while a menu/another interaction is active. Combine it with `AutoCollectQueuedItems` to also collect the selected item.
+
+`ExcludePausedPlayers` is a host option affecting RoundRobin, Killer and FewestItems. It excludes only the paused group; other groups remain eligible, and the shared Void pause covers all four Void tiers. If all players are excluded, keep the original drop location. Remote pause reporting requires this updated mod on those clients. Unknown or stale states remain eligible; pause changes are communicated shortly after the local change. In RiskOfOptions, the three basic essence tiers are displayed as White, Green and Red; existing Tier1/Tier2/Tier3 configuration keys and values are retained.
 
 **BlockGameplayInput** has three choices and defaults to **On**:
 
@@ -108,7 +139,7 @@ Menu scale is limited by available screen space. Temporary and ethereal items ea
 
 Selected pickups retain their temporary or ethereal status. Normally, an empty queue or unavailable next item opens the normal picker.
 
-`ExclusiveItemSelection` applies to exclusive Command essences offering **Halcyon Seed, Newly Hatched Zoea, Exposed Cerebellum, Encrypted Cerebellum, Prison Matrix or Sentry Key**. `Default` finds the item anywhere in the queue. `Automatic` also selects it without an entry, leaving the queue unchanged in that case. Existing entries follow normal consumption and Repeat rules. Pause, disabled groups and temporary/ethereal policies take priority. Items still drop normally; there is no automatic collection. Queued exclusive items that are not offered by the current essence do not block later normal items of the same tier. Those exclusive entries stay queued for their matching essences. Offered but unavailable items still open the manual menu.
+`ExclusiveItemSelection` applies to exclusive Command essences offering **Halcyon Seed, Newly Hatched Zoea, Exposed Cerebellum, Encrypted Cerebellum, Prison Matrix or Sentry Key**. `Default` finds the item anywhere in the queue. `Automatic` also selects it without an entry, leaving the queue unchanged in that case. Existing entries follow normal consumption and Repeat rules. Pause, disabled groups and temporary/ethereal policies take priority. AutoCollectQueuedItems can collect selections using an existing queue entry; selections without an entry still drop normally. Queued exclusive items that are not offered by the current essence do not block later normal items of the same tier. Those exclusive entries stay queued for their matching essences. Offered but unavailable items still open the manual menu.
 
 ## Bug reports
 
