@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.IO;
 using System.Runtime.Serialization.Json;
 using System.Text;
@@ -8,26 +9,56 @@ namespace CommandQueueRemastered.Core
 {
     public sealed class QueueDocument
     {
-        public int Version { get; set; } = 1;
+        public int Version { get; set; } = 2;
         public List<QueueEntry> Queue { get; set; } = new List<QueueEntry>();
         public List<string> RepeatedTiers { get; set; } = new List<string>();
+        public List<QueueEntry> Limits { get; set; } = new List<QueueEntry>();
+        public List<string> DisabledLimiterGroups { get; set; } = new List<string>();
 
         public static QueueDocument Capture(QueueState state) => new QueueDocument
-        { Queue = state.Snapshot(), RepeatedTiers = new List<string>(state.RepeatedTiers) };
+        { Queue = state.Snapshot(), RepeatedTiers = new List<string>(state.RepeatedTiers),
+            Limits = state.Limiter.Snapshot(), DisabledLimiterGroups = new List<string>(state.Limiter.DisabledGroups) };
 
         public static QueueDocument Decode(string json)
         {
             var document = JsonStorage.Decode<QueueDocument>(json);
-            if (document == null || document.Version != 1 || document.Queue == null || document.RepeatedTiers == null)
+            if (document == null || (document.Version != 1 && document.Version != 2) || document.Queue == null || document.RepeatedTiers == null ||
+                (document.Version == 2 && (document.Limits == null || document.DisabledLimiterGroups == null)))
                 throw new InvalidDataException("Unsupported or incomplete queue document.");
             // The same validation applies to disk files and ProperSave payloads.
             new QueueState().Replace(document.Queue, document.RepeatedTiers);
+            document.Limits = document.Limits ?? new List<QueueEntry>();
+            document.DisabledLimiterGroups = document.DisabledLimiterGroups ?? new List<string>();
+            new ItemLimiter(_ => "Queue").Replace(document.Limits, document.DisabledLimiterGroups);
             return document;
         }
         public string Encode() => JsonStorage.Encode(this);
-        public void Apply(QueueState state) => state.Replace(Queue, RepeatedTiers);
+        public void Apply(QueueState state)
+        {
+            var validated = Decode(Encode());
+            state.Replace(validated.Queue, validated.RepeatedTiers);
+            state.Limiter.Replace(validated.Limits, validated.DisabledLimiterGroups);
+        }
         public void ApplyGroups(QueueState state, Func<string, string> pickupGroup, Func<string, string> repeatGroup)
-            => state.ReplaceGroups(Queue, RepeatedTiers, pickupGroup, repeatGroup);
+        {
+            var validated = Decode(Encode());
+            var queueGroups = new HashSet<string>(validated.Queue.Select(entry => pickupGroup(entry.Pickup)), StringComparer.Ordinal);
+            var limitGroups = new HashSet<string>(validated.Limits.Select(entry => pickupGroup(entry.Pickup)), StringComparer.Ordinal);
+            if (queueGroups.Contains(null) || limitGroups.Contains(null)) throw new ArgumentException("Unknown saved pickup group.");
+            // Each saved list replaces only its own nonempty groups. Neither list clears the other.
+            if (queueGroups.Count > 0)
+            {
+                var queue = state.Entries.Where(entry => !queueGroups.Contains(pickupGroup(entry.Pickup))).Concat(validated.Queue).ToList();
+                var repeats = state.RepeatedTiers.Where(tier => !queueGroups.Contains(repeatGroup(tier))).Concat(validated.RepeatedTiers.Where(tier => queueGroups.Contains(repeatGroup(tier)))).ToList();
+                state.Replace(queue, repeats);
+            }
+            if (limitGroups.Count > 0)
+            {
+                var limits = state.Limiter.Entries.Where(entry => !limitGroups.Contains(pickupGroup(entry.Pickup))).Concat(validated.Limits).ToList();
+                var disabled = state.Limiter.DisabledGroups.Where(group => !limitGroups.Contains(group)).Concat(validated.DisabledLimiterGroups.Where(limitGroups.Contains)).ToList();
+                state.Limiter.Replace(limits, disabled);
+            }
+        }
     }
 
     public sealed class QueuePreset
@@ -66,7 +97,7 @@ namespace CommandQueueRemastered.Core
             {
                 if (preset == null || string.IsNullOrWhiteSpace(preset.Id) || !ids.Add(preset.Id) || string.IsNullOrWhiteSpace(preset.Name) || preset.Document == null)
                     throw new InvalidDataException("Invalid preset metadata.");
-                QueueDocument.Decode(preset.Document.Encode());
+                preset.Document = QueueDocument.Decode(preset.Document.Encode());
             }
             presets = loaded;
             legacyImportCompleted = completed;
@@ -112,8 +143,8 @@ namespace CommandQueueRemastered.Core
             string temporary = path + ".tmp";
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             bool completed = legacyImportCompleted || completeLegacyImport;
-            File.WriteAllText(temporary, JsonStorage.Encode(new PresetFile
-                { Version = 1, Presets = updated, LegacyImportCompleted = completed }));
+            File.WriteAllText(temporary, new PresetFile
+                { Version = 1, Presets = updated, LegacyImportCompleted = completed }.EncodeForFile());
             if (File.Exists(path)) File.Replace(temporary, path, path + ".bak");
             else File.Move(temporary, path);
             presets = updated;
@@ -126,6 +157,16 @@ namespace CommandQueueRemastered.Core
         public int Version { get; set; }
         public List<QueuePreset> Presets { get; set; }
         public bool LegacyImportCompleted { get; set; }
+        public string EncodeForFile()
+        {
+            // Keep the versioned container and import marker; only the preset array gains line breaks.
+            const string newline = "\r\n";
+            var lines = new List<string>();
+            foreach (var preset in Presets) lines.Add(JsonStorage.Encode(preset));
+            return "{" + newline + "\"Version\":" + Version + "," + newline +
+                "\"LegacyImportCompleted\":" + (LegacyImportCompleted ? "true" : "false") + "," + newline +
+                "\"Presets\":[" + newline + string.Join("," + newline, lines) + newline + "]" + newline + "}" + newline;
+        }
     }
 
     internal static class JsonStorage

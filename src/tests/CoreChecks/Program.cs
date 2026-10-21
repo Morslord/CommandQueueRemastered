@@ -88,7 +88,7 @@ Check("Snapshot and versioned JSON isolate preset contents", () =>
     var decoded = QueueDocument.Decode(saved.Encode()); decoded.Apply(queue);
     Assert(queue.Entries.Single().Count == 9 && queue.IsRepeated("VoidTier1"));
     bool rejected = false;
-    try { QueueDocument.Decode("{\"Version\":2,\"Queue\":[],\"RepeatedTiers\":[]}"); } catch (InvalidDataException) { rejected = true; }
+    try { QueueDocument.Decode("{\"Version\":3,\"Queue\":[],\"RepeatedTiers\":[]}"); } catch (InvalidDataException) { rejected = true; }
     Assert(rejected);
 });
 Check("Preset create, reload, rename and delete round trip on disk", () =>
@@ -465,7 +465,7 @@ Check("Non-consuming special choices retain the current stationary Repeat progre
     queue.Consume(queue.FindHead("Tier1", _ => "Tier1"), "Tier1");
     Assert(queue.FindHead("Tier1", _ => "Tier1") == 0);
 });
-Check("Normally handled special pickups use regular consumption and unavailable heads stay manual", () =>
+Check("Normal pickup pools retain strict unavailable heads and regular consumption", () =>
 {
     var queue = new QueueState(); queue.Enqueue("a", 2); queue.Enqueue("b");
     var options = new[] { new CommandOption("a", "Tier1", false), new CommandOption("b", "Tier1", true) };
@@ -750,6 +750,778 @@ Check("Unexpected button-buffer layouts fail explicitly instead of partially cha
     catch (InvalidOperationException) { rejected = true; }
     Assert(rejected);
 });
+Check("Essence distribution keeps original drops and handles no living recipients", () =>
+{
+    var distribution = new EssenceDistribution();
+    var players = new[] { new DropCandidate(1, 3), new DropCandidate(2, 7) };
+    Assert(distribution.Choose("Tier1", EssenceDropMode.Original, players, 1) == null);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, Array.Empty<DropCandidate>(), null) == null);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, players, null) == 1);
+});
+Check("Round robin is deterministic and independent for every actual tier", () =>
+{
+    var distribution = new EssenceDistribution();
+    var players = new[] { new DropCandidate(7, 0), new DropCandidate(2, 0) };
+    foreach (string tier in new[] { "Tier1", "Tier2", "Tier3", "Lunar", "Boss", "VoidTier1", "VoidTier2", "VoidTier3", "VoidBoss", "Cursed", "Hex", "Page" })
+    {
+        Assert(distribution.Choose(tier, EssenceDropMode.RoundRobin, players, null) == 2);
+        Assert(distribution.Choose(tier, EssenceDropMode.RoundRobin, players, null) == 7);
+        Assert(distribution.Choose(tier, EssenceDropMode.RoundRobin, players, null) == 2);
+    }
+});
+Check("Distribution survives departures, joins, a sole survivor and a new run", () =>
+{
+    var distribution = new EssenceDistribution();
+    var players = new[] { new DropCandidate(2, 0), new DropCandidate(7, 0) };
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, players, null) == 2);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, new[] { new DropCandidate(3, 0), new DropCandidate(7, 0) }, null) == 3);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, new[] { new DropCandidate(7, 0) }, null) == 7);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, players, null) == 2);
+    distribution.Reset();
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, players, null) == 2);
+});
+Check("Killer must be an eligible living player and otherwise falls back to rotation", () =>
+{
+    var distribution = new EssenceDistribution();
+    var players = new[] { new DropCandidate(2, 6), new DropCandidate(7, 1) };
+    Assert(distribution.Choose("Boss", EssenceDropMode.Killer, players, 7) == 7);
+    Assert(distribution.Choose("Boss", EssenceDropMode.Killer, players, 99) == 2);
+    Assert(distribution.Choose("Boss", EssenceDropMode.Killer, players, null) == 7);
+});
+Check("Fewest items follows permanent counts, rotates ties and reevaluates inventories", () =>
+{
+    var distribution = new EssenceDistribution();
+    var players = new[] { new DropCandidate(2, 9), new DropCandidate(7, 3), new DropCandidate(9, 3) };
+    Assert(distribution.Choose("Tier1", EssenceDropMode.FewestItems, players, 2) == 7);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.FewestItems, players, 2) == 9);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.FewestItems, players, 2) == 7);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.FewestItems, new[] { new DropCandidate(2, 1), new DropCandidate(7, 3) }, null) == 2);
+});
+Check("Preset formatting writes one compact preset per CRLF line without changing data or import status", () =>
+{
+    string directory = Path.Combine(Path.GetTempPath(), "remastered-format-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        string path = Path.Combine(directory, "presets.json");
+        var store = new PresetStore(path);
+        var queue = new QueueState(); queue.Enqueue("item", 5); queue.ToggleRepeat("Tier1");
+        store.Add("Quoted \"name\" with \\ slash and\nnewline ä", queue);
+        queue.Enqueue("other", 2); store.Add("Second", queue);
+        var ids = store.Presets.Select(preset => preset.Id).ToArray();
+        string source = Path.Combine(directory, "legacy.txt"); File.WriteAllText(source, "");
+        store.ImportLegacy(source);
+        string json = File.ReadAllText(path);
+        var presetLines = json.Split(new[] { "\r\n" }, StringSplitOptions.None).Where(line => line.StartsWith("{" ) && line.Length > 1).ToArray();
+        Assert(presetLines.Length == 2 && presetLines[0].EndsWith(",") && !presetLines[1].EndsWith(","));
+        Assert(json.Replace("\r\n", "").IndexOf('\n') == -1);
+        var restored = new PresetStore(path); restored.Load();
+        Assert(restored.Presets.Select(preset => preset.Id).SequenceEqual(ids));
+        Assert(restored.Presets[0].Name == store.Presets[0].Name);
+        Assert(restored.Presets[0].Document.Encode() == store.Presets[0].Document.Encode());
+        File.WriteAllText(source, "invalid legacy data must not be reimported");
+        Assert(restored.ImportLegacy(source) == 0);
+        restored.Delete(ids[0]); restored.Delete(ids[1]);
+        var empty = new PresetStore(path); empty.Load(); Assert(empty.Presets.Count == 0 && empty.ImportLegacy(source) == 0);
+    }
+    finally { Directory.Delete(directory, true); }
+});
+
+Check("Queued collection authorization is single-use and bound to participant, option and expiry", () =>
+{
+    var valid = new QueuedCollectionTicket(7, 3, 12);
+    Assert(valid.TryConsume(7, 3, 11));
+    Assert(!valid.TryConsume(7, 3, 11));
+    var changedParticipant = new QueuedCollectionTicket(7, 3, 12);
+    Assert(!changedParticipant.TryConsume(8, 3, 11));
+    Assert(!changedParticipant.TryConsume(7, 3, 11));
+    var changedOption = new QueuedCollectionTicket(7, 3, 12);
+    Assert(!changedOption.TryConsume(7, 4, 11));
+    Assert(!changedOption.TryConsume(7, 3, 11));
+    var stale = new QueuedCollectionTicket(7, 3, 12);
+    Assert(!stale.TryConsume(7, 3, 12.1f));
+});
+
+Check("Paused recipients are excluded only when the host enables the option", () =>
+{
+    var players = new[] { new DropCandidate(1, 0, true), new DropCandidate(2, 8) };
+    foreach (var mode in new[] { EssenceDropMode.RoundRobin, EssenceDropMode.Killer, EssenceDropMode.FewestItems })
+    {
+        var distribution = new EssenceDistribution();
+        Assert(distribution.Choose("Tier1", mode, players, 1, false) == 1);
+        Assert(distribution.Choose("Tier1", mode, players, 1, true) == 2);
+    }
+});
+Check("All paused recipients retain the original drop and resuming restores eligibility", () =>
+{
+    var distribution = new EssenceDistribution();
+    foreach (var mode in new[] { EssenceDropMode.RoundRobin, EssenceDropMode.Killer, EssenceDropMode.FewestItems })
+        Assert(distribution.Choose("Tier1", mode, new[] { new DropCandidate(1, 0, true) }, 1, true) == null);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, new[] { new DropCandidate(1, 0) }, null, true) == 1);
+});
+Check("Pause masks preserve independent groups and the shared Void pause", () =>
+{
+    var groups = new[] { "White", "Green", "Red", "Lunar", "Boss", "Void", "Hallowed", "Hex", "Pages" };
+    var queue = new QueueState(); queue.TogglePause("White"); queue.TogglePause("Void");
+    uint mask = QueuePauseMask.Capture(groups, queue.IsGroupPaused);
+    Assert(QueuePauseMask.IsPaused(groups, "White", mask));
+    Assert(QueuePauseMask.IsPaused(groups, "Void", mask));
+    Assert(!QueuePauseMask.IsPaused(groups, "Green", mask));
+    Assert(!QueuePauseMask.IsPaused(groups, "unknown", mask));
+    queue.Reset(); Assert(QueuePauseMask.Capture(groups, queue.IsGroupPaused) == 0);
+});
+Check("Remote pauses are bound to sender connection, expire and clear on run reset", () =>
+{
+    var states = new RemoteQueuePauseStatus(); var owner = new object();
+    Assert(!states.IsPaused(1, owner, 0, 0));
+    states.Set(1, owner, 1u << 5, 10);
+    Assert(states.IsPaused(1, owner, 5, 11));
+    Assert(!states.IsPaused(1, owner, 0, 11));
+    Assert(!states.IsPaused(1, new object(), 5, 11));
+    Assert(!states.IsPaused(2, owner, 5, 11));
+    Assert(!states.IsPaused(1, owner, 5, 16));
+    Assert(!states.IsPaused(1, owner, -1, 11));
+    states.Set(1, owner, 0, 12); Assert(!states.IsPaused(1, owner, 5, 13));
+    states.Set(1, owner, 1u << 5, 14); states.Reset(); Assert(!states.IsPaused(1, owner, 5, 14));
+});
+
+Check("Automatic essence interaction requires an available queued choice and respects pause", () =>
+{
+    var queue = new QueueState(_ => "Boss");
+    var options = new[] { new CommandOption("seed", "Boss", true) };
+    bool CanOpen() => CommandSelection.HasQueuedChoice(queue, options, "Boss", _ => "Boss", name => name == "seed", ExclusiveItemBehavior.Automatic);
+    Assert(!CanOpen()); // Exclusive Automatic alone must not open an essence.
+    queue.Enqueue("normal"); Assert(!CanOpen());
+    queue.Enqueue("seed"); Assert(CanOpen());
+    queue.TogglePause("Boss"); Assert(!CanOpen());
+    queue.TogglePause("Boss"); Assert(CanOpen());
+    options[0] = new CommandOption("seed", "Boss", false); Assert(!CanOpen());
+    Assert(queue.Entries.Count == 2 && queue.Entries.All(entry => entry.Count == 1));
+});
+
+Check("Eighteen simultaneous drops drain in bounded batches without loss or duplicates", () =>
+{
+    var work = new BoundedWorkQueue<object>();
+    var drops = Enumerable.Range(0, 18).Select(_ => new object()).ToArray();
+    foreach (var drop in drops) { work.Add(drop); work.Add(drop); }
+    var completed = new System.Collections.Generic.List<object>();
+    var batchCounts = new System.Collections.Generic.List<int>();
+    while (work.Count > 0)
+    {
+        int before = completed.Count;
+        int drained = work.Drain(4, drop => { Assert(work.Remove(drop) == false); completed.Add(drop); });
+        Assert(drained <= 4 && completed.Count - before == drained);
+        batchCounts.Add(drained);
+    }
+    Assert(batchCounts.SequenceEqual(new[] { 4, 4, 4, 4, 2 }));
+    Assert(completed.SequenceEqual(drops));
+});
+Check("Forty drops remain reachable while bounded spawning and automatic selections overlap", () =>
+{
+    var pending = new BoundedWorkQueue<object>();
+    var live = new BoundedWorkQueue<object>();
+    var drops = Enumerable.Range(0, 40).Select(_ => new object()).ToArray();
+    foreach (var drop in drops) pending.Add(drop);
+    var completed = new System.Collections.Generic.HashSet<object>();
+    // A selection finishes later than spawning. Remaining candidates must stay registered.
+    for (int step = 0; step < 80; step++)
+    {
+        Assert(pending.Drain(1, drop => live.Add(drop, prioritize: true)) <= 1);
+        if (step % 2 == 0 && live.TryVisit(out var selected))
+        {
+            Assert(completed.Add(selected)); Assert(live.Remove(selected));
+        }
+    }
+    Assert(pending.Count == 0 && live.Count == 0 && completed.SetEquals(drops));
+});
+Check("A large live set can be visited in constant-size batches with prompt new-spawn priority", () =>
+{
+    var work = new BoundedWorkQueue<object>();
+    var old = Enumerable.Range(0, 10000).Select(_ => new object()).ToArray();
+    foreach (var item in old) work.Add(item);
+    for (int i = 0; i < 32; i++) { Assert(work.TryVisit(out var item) && item == old[i]); }
+    var recent = new object(); work.Add(recent, prioritize: true);
+    Assert(work.TryVisit(out var first) && first == recent);
+    Assert(work.TryVisit(out var resumed) && resumed == old[32]);
+    Assert(work.Count == 10001);
+});
+Check("Live essence visits remain fair when next/current nodes disappear or are re-enabled", () =>
+{
+    var work = new BoundedWorkQueue<object>();
+    var a = new object(); var b = new object(); var c = new object();
+    work.Add(a); work.Add(b); work.Add(c);
+    Assert(work.TryVisit(out var first) && first == a);
+    Assert(work.Remove(b)); Assert(work.Remove(a));
+    Assert(work.TryVisit(out var remaining) && remaining == c);
+    work.Add(b); Assert(work.TryVisit(out var next) && next == c);
+    Assert(work.TryVisit(out next) && next == b);
+    work.Clear(); Assert(work.Count == 0 && !work.TryVisit(out _));
+    work.Add(a); Assert(work.TryVisit(out next) && next == a);
+});
+Check("Callback cancellation leaves no queued work and does not overreport processing", () =>
+{
+    var work = new BoundedWorkQueue<object>();
+    for (int i = 0; i < 18; i++) work.Add(new object());
+    Assert(work.Drain(4, _ => work.Clear()) == 1);
+    Assert(work.Count == 0 && work.Drain(4, _ => { throw new Exception(); }) == 0);
+});
+Check("Fifty stored drop payloads survive delayed creation and allow only one delivery per frame", () =>
+{
+    var work = new DeferredWorkQueue<(int Id, string Pickup, int Flags)>();
+    for (int i = 0; i < 50; i++) work.Add((i, "pickup-" + i, i % 4));
+    for (int frame = 0; frame < 50; frame++)
+    {
+        Assert(work.TryBegin(frame, frame, out var drop));
+        Assert(drop == (frame, "pickup-" + frame, frame % 4));
+        Assert(work.Count == 50 - frame); // Data stays owned until creation completes.
+        Assert(!work.TryBegin(frame, frame, out _));
+        Assert(work.Complete()); Assert(!work.TryBegin(frame, frame, out _));
+        Assert(!work.TryBegin(frame, frame, out _)); // Multiple physics ticks in the same rendered frame.
+    }
+    Assert(work.Count == 0 && !work.TryBegin(50, 50, out _));
+});
+Check("A failed deferred creation retains its complete payload and FIFO position for retry", () =>
+{
+    var work = new DeferredWorkQueue<string>(); work.Add("first:temporary:chest"); work.Add("second:permanent");
+    Assert(work.TryBegin(10, 10, out var first)); work.Retry();
+    Assert(work.Count == 2 && !work.TryBegin(10, 10, out _));
+    Assert(work.TryBegin(11, 11, out var retry) && retry == first); Assert(work.Complete());
+    Assert(work.TryBegin(12, 12, out var second) && second == "second:permanent"); Assert(work.Complete());
+    Assert(work.Count == 0);
+});
+Check("Reset cancels deferred creation safely during callbacks and allows a new run", () =>
+{
+    var work = new DeferredWorkQueue<string>(); work.Add("old");
+    Assert(work.TryBegin(25, 25, out _)); work.Clear(); Assert(!work.Complete()); work.Retry();
+    Assert(work.Count == 0); work.Add("new");
+    Assert(work.TryBegin(0, 0, out var entry) && entry == "new"); Assert(work.Complete());
+});
+Check("Drop delivery keeps at least a thirtieth of a second between requests at different frame rates", () =>
+{
+    const double interval = 1.0 / 30;
+    foreach (int fps in new[] { 30, 60, 120, 240 })
+    {
+        var work = new DeferredWorkQueue<int>(interval);
+        for (int i = 0; i < 50; i++) work.Add(i);
+        var times = new System.Collections.Generic.List<double>();
+        for (int frame = 0; frame < fps * 5; frame++)
+        {
+            double now = (double)frame / fps;
+            if (!work.TryBegin(frame, now, out var value)) continue;
+            Assert(value == times.Count); times.Add(now); Assert(work.Complete());
+            Assert(!work.TryBegin(frame, now, out _));
+        }
+        Assert(times.Count == 50 && work.Count == 0);
+        for (int i = 1; i < times.Count; i++) Assert(times[i] - times[i - 1] >= interval - 1e-12);
+        Assert(times.Count(time => time < 1 - 1e-9) <= 30);
+    }
+});
+Check("Frame hitches and retry never bypass the delivery interval; a new run resets it", () =>
+{
+    var work = new DeferredWorkQueue<string>(1.0 / 30); work.Add("first"); work.Add("second");
+    Assert(work.TryBegin(0, 0, out _)); work.Retry();
+    Assert(!work.TryBegin(1, 0.01, out _));
+    Assert(work.TryBegin(2, 10, out var first) && first == "first"); Assert(work.Complete());
+    Assert(!work.TryBegin(3, 10.001, out _)); // No burst after ten seconds of stalled processing.
+    Assert(work.TryBegin(4, 10.04, out var second) && second == "second"); Assert(work.Complete());
+    work.Clear(); work.Add("new run"); Assert(work.TryBegin(0, 0, out _)); Assert(work.Complete());
+    Throws(() => new DeferredWorkQueue<string>(-1));
+    Throws(() => new DeferredWorkQueue<string>(double.NaN));
+});
+Check("Options use consistent distribution and special-item labels without changing stored keys", () =>
+{
+    Assert(OptionsPresentation.Category("Essence drops") == "Item Distribution");
+    Assert(OptionsPresentation.Category("Special items") == "Special Items");
+    Assert(OptionsPresentation.Category("General") == "General");
+    var keys = new[] { "Tier1", "Tier2", "Tier3", "VoidTier1", "VoidTier2", "VoidTier3", "VoidBoss" };
+    var names = new[] { "White", "Green", "Red", "VoidWhite", "VoidGreen", "VoidRed", "VoidBoss" };
+    for (int i = 0; i < keys.Length; i++)
+    {
+        Assert(OptionsPresentation.Name("Essence drops", keys[i]) == names[i]);
+        Assert(OptionsPresentation.Name("Other mod", keys[i]) == keys[i]);
+    }
+});
+
+Check("Limiter aggregates nonadjacent additions and keeps initial insertion order", () =>
+{
+    var limiter = new ItemLimiter(_ => "White"); limiter.Add("syringe", 1); limiter.Add("glasses", 2); limiter.Add("syringe", 2);
+    Assert(limiter.Entries.Select(entry => entry.Pickup).SequenceEqual(new[] { "syringe", "glasses" }));
+    Assert(limiter.Entries.Select(entry => entry.Count).SequenceEqual(new[] { 3, 2 }));
+    limiter.MoveToBoundary(0, 2);
+    Assert(limiter.Entries.Last().Pickup == "syringe" && limiter.Entries.Last().Count == 3);
+});
+Check("Limiter sorts by catalog ID only on request and never changes other groups", () =>
+{
+    var limiter = new ItemLimiter(pickup => pickup == "green" ? "Green" : "White");
+    limiter.Add("high", 3); limiter.Add("green", 7); limiter.Add("low", 2);
+    limiter.Sort("White", pickup => pickup == "low" ? 1 : 99);
+    Assert(limiter.Entries.Select(entry => entry.Pickup).SequenceEqual(new[] { "low", "green", "high" }));
+    Assert(limiter.Entries.Last().Count == 3);
+});
+Check("Limiter cap reopens after loss and disabling one group keeps its saved targets", () =>
+{
+    var limiter = new ItemLimiter(pickup => pickup == "green" ? "Green" : "White"); limiter.Add("a", 3); limiter.Add("green", 2);
+    Assert(!limiter.Blocks("a", 2) && limiter.Blocks("a", 3) && limiter.Blocks("a", 4));
+    Assert(!limiter.Blocks("a", 1) && !limiter.Blocks("uncapped", 100));
+    limiter.Toggle("White"); Assert(!limiter.Blocks("a", 9) && limiter.Blocks("green", 2) && limiter.Limit("a") == 3);
+    limiter.Toggle("White"); Assert(limiter.Blocks("a", 3));
+});
+Check("Limiter rejects overflow and invalid replacement atomically", () =>
+{
+    var limiter = new ItemLimiter(_ => "White"); limiter.Add("a", 999);
+    Throws(() => limiter.Add("a", 1)); Assert(limiter.Limit("a") == 999);
+    Throws(() => limiter.Replace(new[] { new QueueEntry("b", 2), new QueueEntry("b", 3) }));
+    Assert(limiter.Entries.Single().Pickup == "a");
+});
+Check("Limiter skips full queue entries without consuming them and restores their priority after loss", () =>
+{
+    var queue = new QueueState(_ => "White"); queue.Enqueue("syringe", 3); queue.Enqueue("glasses", 2); queue.Enqueue("crowbar");
+    queue.Limiter.Add("syringe", 3); queue.Limiter.Add("glasses", 2);
+    long syringes = 3; queue.IsPickupAllowed = pickup => !queue.Limiter.Blocks(pickup, pickup == "syringe" ? syringes : pickup == "glasses" ? 2 : 0);
+    var options = new[] { new CommandOption("syringe", "Tier1", true), new CommandOption("glasses", "Tier1", true), new CommandOption("crowbar", "Tier1", true) };
+    Assert(CommandSelection.FindOption(queue, options, "Tier1", _ => "Tier1") == 2);
+    Assert(queue.Entries[0].Count == 3 && queue.Entries[1].Count == 2);
+    syringes = 2; Assert(CommandSelection.FindOption(queue, options, "Tier1", _ => "Tier1") == 0);
+});
+Check("Limiter alone never creates a queue selection and all blocked entries fall back to manual", () =>
+{
+    var queue = new QueueState(_ => "White"); queue.Limiter.Add("a", 3);
+    var options = new[] { new CommandOption("a", "Tier1", true) };
+    Assert(CommandSelection.FindOption(queue, options, "Tier1", _ => "Tier1") == -1);
+    queue.Enqueue("a"); queue.IsPickupAllowed = _ => false;
+    Assert(!CommandSelection.HasQueuedChoice(queue, options, "Tier1", _ => "Tier1", _ => false, ExclusiveItemBehavior.Default));
+    queue.IsPickupAllowed = _ => true; queue.TogglePause("White");
+    Assert(CommandSelection.FindOption(queue, options, "Tier1", _ => "Tier1") == -1);
+});
+Check("Stationary repeat can cycle eligible entries around a blocked stack", () =>
+{
+    var queue = new QueueState(_ => "White"); queue.Enqueue("a", 3); queue.Enqueue("b"); queue.Enqueue("c");
+    queue.ToggleRepeat("Tier1"); queue.RotateRepeatedItems = false; queue.IsPickupAllowed = pickup => pickup != "a";
+    var options = new[] { new CommandOption("a", "Tier1", true), new CommandOption("b", "Tier1", true), new CommandOption("c", "Tier1", true) };
+    for (int index = 0; index < 8; index++)
+    {
+        int head = CommandSelection.FindQueueEntry(queue, options, "Tier1", _ => "Tier1", resetRepeatCycle: true);
+        Assert(head == 1 + index % 2); queue.Consume(head, "Tier1");
+    }
+    Assert(queue.Entries[0].Count == 3);
+});
+Check("Queue documents preserve independent limiter targets and disabled groups", () =>
+{
+    var queue = new QueueState(_ => "White"); queue.Enqueue("a", 2); queue.Limiter.Add("a", 3); queue.Limiter.Toggle("White");
+    var document = QueueDocument.Decode(QueueDocument.Capture(queue).Encode()); queue.Reset(); document.Apply(queue);
+    Assert(document.Version == 2 && queue.Entries.Single().Count == 2 && queue.Limiter.Limit("a") == 3 && !queue.Limiter.Enabled("White"));
+    queue.Limiter.Add("a", 1); Assert(document.Limits.Single().Count == 3);
+});
+Check("Legacy version one documents load without limits and unsupported versions retain live state", () =>
+{
+    var document = QueueDocument.Decode("{\"Version\":1,\"Queue\":[{\"Pickup\":\"a\",\"Count\":2}],\"RepeatedTiers\":[]}");
+    var queue = new QueueState(); queue.Limiter.Add("old", 2); document.Apply(queue);
+    Assert(queue.Entries.Single().Count == 2 && queue.Limiter.Entries.Count == 0);
+});
+Check("Limiter-only preset groups retain the queue and survive preset disk round trips", () =>
+{
+    string Group(string pickup) => pickup == "green" ? "Green" : "White";
+    string TierGroup(string tier) => tier == "Tier2" ? "Green" : "White";
+    var queue = new QueueState(Group); queue.Enqueue("green", 2); queue.Enqueue("white"); queue.Limiter.Add("white", 4);
+    var document = new QueueDocument(); document.Limits.Add(new QueueEntry("green", 3)); document.DisabledLimiterGroups.Add("Green");
+    document.ApplyGroups(queue, Group, TierGroup);
+    Assert(queue.Entries.Select(entry => entry.Pickup).SequenceEqual(new[] { "green", "white" }) && queue.Entries[0].Count == 2 &&
+        queue.Limiter.Limit("white") == 4 && queue.Limiter.Limit("green") == 3 && !queue.Limiter.Enabled("Green"));
+    string path = Path.Combine(Path.GetTempPath(), "limiter-presets-" + Guid.NewGuid().ToString("N"), "presets.json");
+    try { var store = new PresetStore(path); store.Add("Limited", queue); var reload = new PresetStore(path); reload.Load();
+        var restored = new QueueState(Group); reload.Presets.Single().Document.Apply(restored); Assert(restored.Limiter.Limit("green") == 3 && !restored.Limiter.Enabled("Green")); }
+    finally { Directory.Delete(Path.GetDirectoryName(path), true); }
+});
+Check("Global distribution and stage exclusions preserve independent source switches", () =>
+{
+    Assert(!DistributionRules.Allows(false, "stage", "", DropSource.Other, true, true, true));
+    Assert(!DistributionRules.Allows(true, "bazaar", " stage, BAZAAR;moon2 ", DropSource.Other, true, true, true));
+    Assert(DistributionRules.Allows(true, "bazaar2", "bazaar", DropSource.Other, true, true, true));
+    Assert(!DistributionRules.Allows(true, "stage", "", DropSource.Chest, false, true, true));
+    Assert(!DistributionRules.Allows(true, "stage", "", DropSource.ExchangePool, true, false, true));
+    Assert(!DistributionRules.Allows(true, "stage", "", DropSource.Teleporter, true, true, false));
+    Assert(DistributionRules.Allows(true, "stage", "", DropSource.Other, false, false, false));
+});
+Check("Pending distribution assignments balance a burst before inventories update", () =>
+{
+    var ledger = new DistributionLedger(); var distribution = new EssenceDistribution();
+    var recipients = new System.Collections.Generic.List<long>();
+    for (int index = 0; index < 18; index++)
+    {
+        var players = new[] { 1L, 2L, 3L }.Select(id => new DropCandidate(id, ledger.Count(id, "Tier2", InventoryCountMode.SameTier)));
+        long chosen = distribution.Choose("Tier2", EssenceDropMode.FewestItems, players, null).Value;
+        ledger.Reserve(chosen, "Tier2"); recipients.Add(chosen);
+    }
+    Assert(recipients.Take(6).SequenceEqual(new[] { 1L, 2L, 3L, 1L, 2L, 3L }));
+    Assert(new[] { 1L, 2L, 3L }.All(id => ledger.Count(id, "Tier2", InventoryCountMode.AllItems) == 6));
+});
+Check("Distribution reservations can be reassigned and released exactly once across tiers", () =>
+{
+    var ledger = new DistributionLedger(); var first = ledger.Reserve(1, "Tier1"); ledger.Reserve(1, "Tier2");
+    Assert(ledger.Count(1, "Tier1", InventoryCountMode.SameTier) == 1 && ledger.Count(1, "Tier1", InventoryCountMode.AllItems) == 2);
+    first.Recipient = 2; Assert(ledger.Count(1, "Tier1", InventoryCountMode.AllItems) == 1 && ledger.Count(2, "Tier1", InventoryCountMode.AllItems) == 1);
+    ledger.Release(first); ledger.Release(first); Assert(ledger.Count(2, "Tier1", InventoryCountMode.AllItems) == 0);
+    ledger.Reset(); Assert(ledger.Count(1, "Tier1", InventoryCountMode.AllItems) == 0);
+});
+Check("Hex distributes complete blocks of seven over three players with pending assignments", () =>
+{
+    var ledger = new DistributionLedger(); var distribution = new EssenceDistribution();
+    for (int index = 0; index < 28; index++)
+    {
+        var players = new[] { 1L, 2L, 3L }.Select(id => new DropCandidate(id, ledger.Count(id, "Hex", InventoryCountMode.SameTier)));
+        long chosen = distribution.Choose("Hex", EssenceDropMode.Killer, players, 3, hexGroupsOfSeven: true).Value;
+        Assert(chosen == (index / 7) % 3 + 1); ledger.Reserve(chosen, "Hex");
+    }
+});
+Check("Hex finishes the closest partial block and respects pause and Original", () =>
+{
+    var distribution = new EssenceDistribution();
+    var players = new[] { new DropCandidate(1, 5), new DropCandidate(2, 6), new DropCandidate(3, 0, true) };
+    Assert(distribution.Choose("Hex", EssenceDropMode.RoundRobin, players, null, true, true) == 2);
+    Assert(distribution.Choose("Hex", EssenceDropMode.Original, players, null, true, true) == null);
+    Assert(distribution.Choose("Hex", EssenceDropMode.RoundRobin, new[] { new DropCandidate(1, 5), new DropCandidate(2, 7) }, null, true, true) == 1);
+    distribution.Reset(); Assert(distribution.Choose("Hex", EssenceDropMode.RoundRobin, new[] { new DropCandidate(1, 0, true) }, null, true, true) == null);
+});
+Check("Limiter pending selections bridge replicated inventory delays without counting arrivals twice", () =>
+{
+    var pending = new PendingItemSelections(); pending.Reserve("a", 2, 0); pending.Reserve("a", 2, 0.1);
+    Assert(pending.Count("a", 2, 0.2) == 2);
+    Assert(pending.Count("a", 3, 1) == 1 && pending.Count("a", 3, 1.1) == 1);
+    Assert(pending.Count("a", 4, 2) == 0);
+    var cancelled = pending.Reserve("a", 4, 3); pending.Cancel(cancelled); Assert(pending.Count("a", 4, 3.1) == 0);
+    pending.Reserve("a", 4, 4); Assert(pending.Count("a", 4, 14) == 0);
+});
+Check("Distribution special tier labels use Hallowed Hex Pages without changing saved keys", () =>
+{
+    Assert(OptionsPresentation.Name("Essence drops", "Cursed") == "Hallowed");
+    Assert(OptionsPresentation.Name("Essence drops", "Hex") == "Hex");
+    Assert(OptionsPresentation.Name("Essence drops", "Page") == "Pages");
+});
+
+Check("Combined preset preview sums repeated pickups, appends limiter-only items and retains first-seen order", () =>
+{
+    var document = new QueueDocument { Queue = new System.Collections.Generic.List<QueueEntry> {
+        new QueueEntry("syringe", 1), new QueueEntry("glasses", 2), new QueueEntry("syringe", 2) },
+        Limits = new System.Collections.Generic.List<QueueEntry> { new QueueEntry("syringe", 9), new QueueEntry("crowbar", 5) } };
+    var preview = PresetPreview.Build(document);
+    Assert(preview.Select(item => item.Pickup).SequenceEqual(new[] { "syringe", "glasses", "crowbar" }));
+    Assert(preview[0].Quantity == 3 && preview[0].Badge == "3/9" && !preview[0].LimiterOnly);
+    Assert(preview[1].Badge == "2/—" && !preview[1].LimiterOnly);
+    Assert(preview[2].Quantity == 0 && preview[2].Badge == "0/5" && preview[2].LimiterOnly);
+    Assert(document.Queue.Count == 3 && document.Queue[0].Count == 1);
+});
+Check("Combined preview handles legacy documents and snapshots without mutating either saved list", () =>
+{
+    var document = QueueDocument.Decode("{\"Version\":1,\"Queue\":[{\"Pickup\":\"a\",\"Count\":999}],\"RepeatedTiers\":[]}");
+    var preview = PresetPreview.Build(document); document.Queue[0].Count = 1;
+    Assert(preview.Single().Quantity == 999 && preview.Single().Limit == null && !preview.Single().LimiterOnly);
+    var empty = new QueueDocument(); Assert(PresetPreview.Build(empty).Count == 0);
+    empty.Limits.Add(new QueueEntry("only-limit", 3)); Assert(PresetPreview.Build(empty).Single().LimiterOnly);
+});
+Check("Queue pause, Limiter enabled and Repeat remain independent when switching their controls", () =>
+{
+    var queue = new QueueState(_ => "White"); queue.Enqueue("a", 4); queue.Limiter.Add("a", 3);
+    queue.TogglePause("White"); Assert(queue.IsGroupPaused("White") && queue.Limiter.Enabled("White"));
+    queue.Limiter.Toggle("White"); Assert(queue.IsGroupPaused("White") && !queue.Limiter.Enabled("White"));
+    queue.ToggleRepeat("Tier1"); Assert(queue.IsRepeated("Tier1") && !queue.Limiter.Enabled("White"));
+    queue.TogglePause("White"); Assert(!queue.IsGroupPaused("White") && !queue.Limiter.Enabled("White"));
+    var restored = new QueueState(_ => "White"); QueueDocument.Decode(QueueDocument.Capture(queue).Encode()).Apply(restored);
+    Assert(!restored.Limiter.Enabled("White") && restored.IsRepeated("Tier1"));
+});
+Check("Stage exclusions default to both requested realms and preserve unknown scene names", () =>
+{
+    var selected = StageExclusions.Parse("BAZAAR, modded_stage; computationalexchange\r\n");
+    Assert(StageExclusions.Parse(StageExclusions.Defaults).SetEquals(new[] { "bazaar", "computationalexchange" }));
+    StageExclusions.Set(selected, new[] { "blackbeach", "blackbeach2" }, true);
+    Assert(StageExclusions.ContainsAll(selected, new[] { "blackbeach", "blackbeach2" }));
+    StageExclusions.Set(selected, new[] { "blackbeach", "blackbeach2" }, false);
+    Assert(selected.Contains("modded_stage") && selected.Contains("bazaar") && !selected.Contains("blackbeach"));
+    Assert(StageExclusions.Parse(StageExclusions.Encode(selected)).SetEquals(selected));
+    Assert(!DistributionRules.Allows(true, "computationalexchange", StageExclusions.Defaults, DropSource.Other, true, true, true));
+});
+Check("Stage variant selection represents partial exclusions and treats clear selection as allow-all", () =>
+{
+    var selected = StageExclusions.Parse("golemplains");
+    Assert(!StageExclusions.ContainsAll(selected, new[] { "golemplains", "golemplains2" }));
+    StageExclusions.Set(selected, new[] { "golemplains", "golemplains2" }, true);
+    Assert(StageExclusions.ContainsAll(selected, new[] { "golemplains", "golemplains2" }));
+    selected.Clear(); Assert(StageExclusions.Encode(selected) == "");
+    Assert(DistributionRules.Allows(true, "bazaar", StageExclusions.Encode(selected), DropSource.Other, true, true, true));
+});
+
+Check("Queue-only presets preserve all limiter targets and enabled states, including the same group", () =>
+{
+    var queue = new QueueState(_ => "White"); queue.Enqueue("old", 2); queue.Limiter.Add("old", 8); queue.Limiter.Toggle("White");
+    var preset = new QueueDocument(); preset.Queue.Add(new QueueEntry("new", 3));
+    preset.ApplyGroups(queue, _ => "White", _ => "White");
+    Assert(queue.Entries.Single().Pickup == "new" && queue.Limiter.Limit("old") == 8 && !queue.Limiter.Enabled("White"));
+    var legacy = QueueDocument.Decode("{\"Version\":1,\"Queue\":[{\"Pickup\":\"legacy\",\"Count\":1}],\"RepeatedTiers\":[]}");
+    legacy.ApplyGroups(queue, _ => "White", _ => "White");
+    Assert(queue.Entries.Single().Pickup == "legacy" && queue.Limiter.Limit("old") == 8 && !queue.Limiter.Enabled("White"));
+});
+Check("Limiter-only presets preserve live queue objects and stationary Repeat progress", () =>
+{
+    var queue = new QueueState(_ => "White"); queue.Enqueue("a"); queue.Enqueue("b"); queue.ToggleRepeat("Tier1"); queue.RotateRepeatedItems = false;
+    var first = queue.Entries[0]; queue.Consume(0, "Tier1");
+    var preset = new QueueDocument(); preset.Limits.Add(new QueueEntry("a", 4));
+    preset.ApplyGroups(queue, _ => "White", _ => "White");
+    Assert(ReferenceEquals(queue.Entries[0], first) && queue.IsRepeated("Tier1") && queue.FindHead("Tier1", _ => "Tier1", false) == 1);
+    Assert(queue.Entries.Count == 2 && queue.Limiter.Limit("a") == 4);
+});
+Check("Mixed presets replace queue and limiter groups independently", () =>
+{
+    string Group(string name) => name.StartsWith("green", StringComparison.Ordinal) ? "Green" : "White";
+    string TierGroup(string name) => name == "Tier2" ? "Green" : "White";
+    var queue = new QueueState(Group); queue.Enqueue("white-old", 2); queue.Enqueue("green-old", 3);
+    queue.Limiter.Add("white-limit", 6); queue.Limiter.Add("green-old-limit", 9); queue.Limiter.Toggle("White"); queue.ToggleRepeat("Tier2");
+    var preset = new QueueDocument(); preset.Queue.Add(new QueueEntry("white-new", 1)); preset.Limits.Add(new QueueEntry("green-new-limit", 4));
+    preset.DisabledLimiterGroups.Add("Green"); preset.ApplyGroups(queue, Group, TierGroup);
+    Assert(queue.Entries.Any(entry => entry.Pickup == "green-old" && entry.Count == 3) && queue.Entries.Any(entry => entry.Pickup == "white-new"));
+    Assert(queue.Limiter.Limit("white-limit") == 6 && queue.Limiter.Limit("green-new-limit") == 4 && !queue.Limiter.Limit("green-old-limit").HasValue);
+    Assert(queue.IsRepeated("Tier2") && !queue.Limiter.Enabled("White") && !queue.Limiter.Enabled("Green"));
+});
+Check("Saving and loading a limiter-only preset never clears an unrelated live queue", () =>
+{
+    string path = Path.Combine(Path.GetTempPath(), "limiter-isolated-" + Guid.NewGuid().ToString("N"), "presets.json");
+    try
+    {
+        var saved = new QueueState(_ => "White"); saved.Limiter.Add("a", 3);
+        var store = new PresetStore(path); store.Add("Limits", saved); Assert(saved.Entries.Count == 0 && saved.Limiter.Limit("a") == 3);
+        var reload = new PresetStore(path); reload.Load(); var live = new QueueState(_ => "White"); live.Enqueue("b", 7);
+        reload.Presets.Single().Document.ApplyGroups(live, _ => "White", _ => "White");
+        Assert(live.Entries.Single().Pickup == "b" && live.Entries.Single().Count == 7 && live.Limiter.Limit("a") == 3);
+    }
+    finally { Directory.Delete(Path.GetDirectoryName(path), true); }
+});
+Check("Preview orders each tier's queue items then limiter-only items without changing either saved list", () =>
+{
+    var document = new QueueDocument(); document.Queue.AddRange(new[] {
+        new QueueEntry("green-a", 2), new QueueEntry("white-b", 1), new QueueEntry("white-a", 3), new QueueEntry("green-a", 1) });
+    document.Limits.AddRange(new[] { new QueueEntry("green-only", 4), new QueueEntry("white-only", 5), new QueueEntry("white-a", 9) });
+    string before = document.Encode();
+    var items = PresetPreview.Build(document, name => name.StartsWith("white", StringComparison.Ordinal) ? 0 : 1);
+    Assert(items.Select(item => item.Pickup).SequenceEqual(new[] { "white-b", "white-a", "white-only", "green-a", "green-only" }));
+    Assert(items[1].Badge == "3/9" && items[3].Badge == "3/—" && items[2].LimiterOnly && document.Encode() == before);
+});
+Check("Stage list rejects test/art scenes and canonicalizes both Ambry name prefixes", () =>
+{
+    Assert(!StageExclusions.IsSelectable("artreview", true) && !StageExclusions.IsSelectable("TESTOTHERBROTHER", true));
+    Assert(!StageExclusions.IsSelectable("menu", false) && StageExclusions.IsSelectable("artifactworld", true));
+    var names = new[] { "Bulwark's Ambry", "HiddenRealm: Bulwark's Ambry", " Hidden Realm: Bulwark’s Ambry " };
+    Assert(names.Select(StageExclusions.DisplayName).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1);
+    Assert(StageExclusions.DisplayName("Bulwark's Ambry (Tar Research)") == "Bulwark's Ambry (Tar Research)");
+});
+Check("Limiter count policies independently include temporary and ethereal stacks", () =>
+{
+    Assert(LimiterCounting.Count(5, 3, 2, LimiterItemCount.PermanentOnly) == 5);
+    Assert(LimiterCounting.Count(5, 3, 2, LimiterItemCount.IncludeTemporary) == 8);
+    Assert(LimiterCounting.Count(5, 3, 2, LimiterItemCount.IncludeEthereal) == 7);
+    Assert(LimiterCounting.Count(5, 3, 2, LimiterItemCount.IncludeBoth) == 10);
+    Assert(LimiterCounting.Count(int.MaxValue, int.MaxValue, int.MaxValue, LimiterItemCount.IncludeBoth) == 3L * int.MaxValue);
+    Assert(LimiterCounting.PendingAmount(true, false, LimiterItemCount.PermanentOnly) == 0);
+    Assert(LimiterCounting.PendingAmount(false, true, LimiterItemCount.IncludeEthereal) == 1);
+    Assert(LimiterCounting.PendingAmount(true, true, LimiterItemCount.IncludeBoth) == 2);
+    Assert(LimiterCounting.PendingAmount(false, false, LimiterItemCount.IncludeBoth) == 1);
+});
+Check("Included temporary stacks block queue selection until they expire without consuming blocked entries", () =>
+{
+    var queue = new QueueState(_ => "White"); queue.Enqueue("a", 2); queue.Enqueue("b"); queue.Limiter.Add("a", 3);
+    int temporary = 2;
+    queue.IsPickupAllowed = name => !queue.Limiter.Blocks(name, name == "a" ? LimiterCounting.Count(1, temporary, 0, LimiterItemCount.IncludeTemporary) : 0);
+    var options = new[] { new CommandOption("a", "Tier1", true), new CommandOption("b", "Tier1", true) };
+    Assert(CommandSelection.FindOption(queue, options, "Tier1", _ => "Tier1") == 1 && queue.Entries[0].Count == 2);
+    temporary = 0; Assert(CommandSelection.FindOption(queue, options, "Tier1", _ => "Tier1") == 0);
+    SpecialPickupPolicy.CompleteSelection(queue, 0, "Tier1", SpecialPickupBehavior.UseQueueNormally);
+    Assert(queue.Entries[0].Count == 1);
+});
+Check("Weighted pending selections acknowledge combined special-stack arrivals without double counting", () =>
+{
+    var pending = new PendingItemSelections(); pending.Reserve("a", 3, 0, 2);
+    Assert(pending.Count("a", 3, 0.1) == 2);
+    Assert(pending.Count("a", 4, 1) == 1 && pending.Count("a", 4, 1.1) == 1);
+    Assert(pending.Count("a", 5, 2) == 0);
+    var ticket = pending.Reserve("a", 5, 3, 2); pending.Cancel(ticket); Assert(pending.Count("a", 5, 3.1) == 0);
+});
+
+Check("Special pools skip absent or unavailable regular heads without deleting them", () =>
+{
+    foreach (bool absent in new[] { false, true })
+    {
+        var queue = new QueueState(); queue.Enqueue("unsupported", 2); queue.Enqueue("valid", 2);
+        var offered = new CommandOption("valid", "Tier1", true, specialPickup: true);
+        var options = absent ? new[] { offered } : new[] { new CommandOption("unsupported", "Tier1", false, true), offered };
+        string before = QueueDocument.Capture(queue).Encode();
+        Assert(CommandSelection.FindOption(queue, options, "Tier1", _ => "Tier1") == options.Length - 1);
+        Assert(CommandSelection.HasQueuedChoice(queue, options, "Tier1", _ => "Tier1", _ => false, ExclusiveItemBehavior.Default));
+        Assert(CommandSelection.FindQueueEntry(queue, options, "Tier1", _ => "Tier1") == 1);
+        Assert(QueueDocument.Capture(queue).Encode() == before);
+        SpecialPickupPolicy.CompleteSelection(queue, 1, "Tier1", SpecialPickupBehavior.UseQueueNormally);
+        Assert(queue.Entries[0].Pickup == "unsupported" && queue.Entries[0].Count == 2 && queue.Entries[1].Count == 1);
+    }
+});
+Check("Special fallback respects actual tiers, Pause, limits and an empty eligible pool", () =>
+{
+    var queue = new QueueState(_ => "White"); queue.Enqueue("missing"); queue.Enqueue("capped"); queue.Enqueue("valid"); queue.Enqueue("green");
+    string Tier(string pickup) => pickup == "green" ? "Tier2" : "Tier1";
+    queue.IsPickupAllowed = pickup => pickup != "capped";
+    var options = new[] { new CommandOption("capped", "Tier1", true, true), new CommandOption("valid", "Tier1", true, true), new CommandOption("green", "Tier2", true, true) };
+    Assert(CommandSelection.FindOption(queue, options, "Tier1", Tier) == 1);
+    queue.TogglePause("White"); Assert(CommandSelection.FindOption(queue, options, "Tier1", Tier) == -1); queue.TogglePause("White");
+    Assert(CommandSelection.FindOption(queue, options, null, Tier) == -1);
+    options[1] = new CommandOption("valid", "Tier1", false, true);
+    Assert(CommandSelection.FindOption(queue, options, "Tier1", Tier) == -1);
+    Assert(!CommandSelection.HasQueuedChoice(queue, options, "Tier1", Tier, _ => false, ExclusiveItemBehavior.Default));
+});
+Check("Special fallback retains strict permanent selection and manual-policy options", () =>
+{
+    var queue = new QueueState(); queue.Enqueue("missing"); queue.Enqueue("valid");
+    Assert(CommandSelection.FindOption(queue, new[] { new CommandOption("valid", "Tier1", true) }, "Tier1", _ => "Tier1") == -1);
+    Assert(CommandSelection.FindOption(queue, new[] { new CommandOption("valid", "Tier1", false, true) }, "Tier1", _ => "Tier1") == -1);
+    Assert(CommandSelection.FindOption(queue, Array.Empty<CommandOption>(), "Tier1", _ => "Tier1") == -1);
+});
+Check("Special fallback keeps both Repeat modes and no-consumption progress intact", () =>
+{
+    foreach (bool rotate in new[] { false, true })
+    {
+        var queue = new QueueState { RotateRepeatedItems = rotate };
+        queue.Replace(new[] { new QueueEntry("missing", 2), new QueueEntry("a", 1), new QueueEntry("b", 1) }, new[] { "Tier1" });
+        var options = new[] { new CommandOption("a", "Tier1", true, true), new CommandOption("b", "Tier1", true, true) };
+        string before = QueueDocument.Capture(queue).Encode();
+        for (int count = 0; count < 3; count++)
+        {
+            int head = CommandSelection.FindQueueEntry(queue, options, "Tier1", _ => "Tier1");
+            Assert(queue.Entries[head].Pickup == "a");
+            SpecialPickupPolicy.CompleteSelection(queue, head, "Tier1", SpecialPickupBehavior.UseQueueWithoutConsuming);
+        }
+        Assert(QueueDocument.Capture(queue).Encode() == before);
+        foreach (string expected in new[] { "a", "b", "a", "b" })
+        {
+            int head = CommandSelection.FindQueueEntry(queue, options, "Tier1", _ => "Tier1", resetRepeatCycle: true);
+            Assert(queue.Entries[head].Pickup == expected);
+            SpecialPickupPolicy.CompleteSelection(queue, head, "Tier1", SpecialPickupBehavior.UseQueueNormally);
+        }
+        Assert(queue.Entries[0].Pickup == "missing" && queue.Entries[0].Count == 2);
+    }
+});
+Check("Special fallback revalidates a changed pool and preserves exclusive behavior", () =>
+{
+    var queue = new QueueState(); queue.Enqueue("missing"); queue.Enqueue("a"); queue.Enqueue("b");
+    var options = new[] { new CommandOption("a", "Boss", true, true), new CommandOption("b", "Boss", true, true) };
+    var planned = queue.Entries[CommandSelection.FindQueueEntry(queue, options, "Boss", _ => "Boss")];
+    options[0] = new CommandOption("a", "Boss", false, true);
+    var next = queue.Entries[CommandSelection.FindQueueEntry(queue, options, "Boss", _ => "Boss")];
+    Assert(!ReferenceEquals(planned, next) && next.Pickup == "b");
+    var exclusive = new[] { new CommandOption("seed", "Boss", true, true) };
+    Assert(CommandSelection.FindOption(queue, exclusive, "Boss", _ => "Boss", name => name == "seed") == -1);
+    Assert(CommandSelection.FindOption(queue, exclusive, "Boss", _ => "Boss", name => name == "seed", ExclusiveItemBehavior.Automatic) == 0);
+    Assert(!CommandSelection.HasQueuedChoice(queue, exclusive, "Boss", _ => "Boss", name => name == "seed", ExclusiveItemBehavior.Automatic));
+});
+Check("Drifter Salvage defaults to SkillUser with independent source and global exclusions", () =>
+{
+    Assert(DistributionRules.Allows(true, "stage", "", DropSource.DrifterSalvage, true, true, true));
+    Assert(!DistributionRules.Allows(true, "stage", "", DropSource.DrifterSalvage, true, true, true, DrifterSalvageMode.Original));
+    foreach (var mode in new[] { DrifterSalvageMode.SkillUser, DrifterSalvageMode.ItemDistribution })
+    {
+        Assert(DistributionRules.Allows(true, "stage", "", DropSource.DrifterSalvage, false, false, false, mode));
+        Assert(!DistributionRules.Allows(false, "stage", "", DropSource.DrifterSalvage, true, true, true, mode));
+        Assert(!DistributionRules.Allows(true, "bazaar", "bazaar", DropSource.DrifterSalvage, true, true, true, mode));
+        Assert(!DistributionRules.Allows(true, "stage", "", DropSource.Chest, false, true, true, mode));
+    }
+    Assert(DistributionRules.Allows(true, "stage", "", DropSource.Other, false, false, false, DrifterSalvageMode.Original));
+});
+
+Check("Independent Ignore switches preserve the three behavior values and only match their special types", () =>
+{
+    Assert((int)SpecialPickupBehavior.ManualMenu == 0 && (int)SpecialPickupBehavior.UseQueueWithoutConsuming == 1 &&
+        (int)SpecialPickupBehavior.UseQueueNormally == 2 && Enum.GetValues<SpecialPickupBehavior>().Length == 3);
+    foreach (bool temporary in new[] { false, true }) foreach (bool ethereal in new[] { false, true })
+    {
+        uint mask = SpecialPickupDistribution.IgnoreMask(temporary, ethereal);
+        Assert(!SpecialPickupDistribution.Ignores(mask, false, false));
+        Assert(SpecialPickupDistribution.Ignores(mask, true, false) == temporary);
+        Assert(SpecialPickupDistribution.Ignores(mask, false, true) == ethereal);
+        Assert(SpecialPickupDistribution.Ignores(mask, true, true) == (temporary || ethereal));
+    }
+});
+Check("Ignore recipient filtering leaves queue and Repeat intact while manual interaction retains Behaviour", () =>
+{
+    var queue = new QueueState { RotateRepeatedItems = false };
+    queue.Replace(new[] { new QueueEntry("a", 1), new QueueEntry("b", 1) }, new[] { "Tier1" });
+    var before = QueueDocument.Capture(queue).Encode();
+    Assert(EssenceDistribution.ChooseSkillUser(new[] { new DropCandidate(1, 0, ignored: true) }, 1, false) == null);
+    Assert(QueueDocument.Capture(queue).Encode() == before && queue.FindHead("Tier1", _ => "Tier1", false) == 0);
+    var behaviour = SpecialPickupPolicy.Resolve(true, false, SpecialPickupBehavior.UseQueueNormally, SpecialPickupBehavior.ManualMenu);
+    SpecialPickupPolicy.CompleteSelection(queue, 0, "Tier1", behaviour);
+    Assert(queue.FindHead("Tier1", _ => "Tier1", false) == 1);
+});
+Check("Every recipient algorithm excludes Ignore independently of paused-group filtering", () =>
+{
+    foreach (var mode in new[] { EssenceDropMode.RoundRobin, EssenceDropMode.FewestItems, EssenceDropMode.Killer })
+    foreach (bool excludePaused in new[] { false, true })
+    {
+        var distribution = new EssenceDistribution();
+        var players = new[] { new DropCandidate(1, 0, false, true), new DropCandidate(2, 20) };
+        for (int index = 0; index < 5; index++) Assert(distribution.Choose("Tier1", mode, players, 1, excludePaused) == 2);
+        Assert(distribution.Choose("Tier1", mode, new[] { players[0] }, 1, excludePaused) == null);
+    }
+    Assert(new EssenceDistribution().Choose("Hex", EssenceDropMode.FewestItems,
+        new[] { new DropCandidate(1, 6, false, true), new DropCandidate(2, 0) }, null, false, true) == 2);
+});
+Check("Drifter skill targeting keeps each caster's drops together without changing distribution order", () =>
+{
+    var players = new[] { new DropCandidate(10, 0), new DropCandidate(20, 0), new DropCandidate(30, 0) };
+    var distribution = new EssenceDistribution();
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, players, null) == 10);
+    foreach (long caster in new long[] { 10, 20, 20, 10 })
+        for (int drop = 0; drop < 4; drop++) Assert(EssenceDistribution.ChooseSkillUser(players, caster, false) == caster);
+    Assert(distribution.Choose("Tier1", EssenceDropMode.RoundRobin, players, null) == 20);
+    Assert(EssenceDistribution.ChooseSkillUser(players, null, false) == null);
+    Assert(EssenceDistribution.ChooseSkillUser(players, 99, false) == null);
+    Assert(EssenceDistribution.ChooseSkillUser(Array.Empty<DropCandidate>(), 10, false) == null);
+});
+Check("Caster targeting respects personal Ignore and optional Pause without assigning another player", () =>
+{
+    var players = new[] { new DropCandidate(10, 0, false, true), new DropCandidate(20, 0, true), new DropCandidate(30, 0) };
+    Assert(EssenceDistribution.ChooseSkillUser(players, 10, false) == null);
+    Assert(EssenceDistribution.ChooseSkillUser(players, 10, true) == null);
+    Assert(EssenceDistribution.ChooseSkillUser(players, 20, false) == 20);
+    Assert(EssenceDistribution.ChooseSkillUser(players, 20, true) == null);
+    Assert(EssenceDistribution.ChooseSkillUser(players, 30, true) == 30);
+});
+Check("Remote Ignore masks remain personal, connection-bound, expiring and separate from Pause", () =>
+{
+    var ignores = new RemoteQueuePauseStatus(); var pauses = new RemoteQueuePauseStatus();
+    var host = new object(); var drifter = new object();
+    ignores.Set(1, host, SpecialPickupDistribution.IgnoreMask(true, false), 0);
+    ignores.Set(2, drifter, 0, 0);
+    Assert(ignores.IsPaused(1, host, 0, 1));
+    Assert(!ignores.IsPaused(2, drifter, 0, 1) && !ignores.IsPaused(1, host, 1, 1));
+    Assert(!ignores.IsPaused(1, drifter, 0, 1) && !ignores.IsPaused(3, drifter, 0, 1));
+    Assert(!pauses.IsPaused(1, host, 0, 1));
+    ignores.Set(2, drifter, 3, 1);
+    Assert(ignores.IsPaused(2, drifter, 0, 2) && ignores.IsPaused(2, drifter, 1, 2));
+    Assert(!ignores.IsPaused(2, drifter, 0, 6.1f));
+    ignores.Reset(); Assert(!ignores.IsPaused(1, host, 0, 1));
+});
+
+Check("Single Drifter choice migrates both legacy configuration layouts without changing their meaning", () =>
+{
+    foreach (string target in new[] { "", "SkillUser", "ItemDistribution" })
+    {
+        Assert(DrifterSalvageSettings.TryMigrate("false", target, out var disabled) && disabled == DrifterSalvageMode.Original);
+        Assert(DrifterSalvageSettings.TryMigrate("true", target, out var enabled) && enabled ==
+            (target == "SkillUser" ? DrifterSalvageMode.SkillUser : DrifterSalvageMode.ItemDistribution));
+    }
+    foreach (var mode in Enum.GetValues<DrifterSalvageMode>())
+    {
+        Assert(DrifterSalvageSettings.TryMigrate(mode.ToString(), "SkillUser", out var parsed) && parsed == mode);
+        Assert(DrifterSalvageSettings.TryMigrate(mode.ToString().ToLowerInvariant(), "obsolete", out var again) && again == mode);
+    }
+    Assert(!DrifterSalvageSettings.TryMigrate("invalid", "SkillUser", out var fallback) && fallback == DrifterSalvageMode.Original);
+    Assert(!DrifterSalvageSettings.TryMigrate("99", "", out fallback) && fallback == DrifterSalvageMode.Original);
+    Assert(!DrifterSalvageSettings.TryMigrate("true", "invalid", out fallback) && fallback == DrifterSalvageMode.Original);
+});
+
 Console.WriteLine($"{passed} checks passed.");
 
 sealed class InputBufferFixture

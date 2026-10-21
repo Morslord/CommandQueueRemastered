@@ -10,12 +10,20 @@ namespace CommandQueueRemastered.Core
         public string Pickup { get; }
         public string Tier { get; }
         public bool Available { get; }
-        public CommandOption(string pickup, string tier, bool available)
-        { Pickup = pickup; Tier = tier; Available = available; }
+        public bool SpecialPickup { get; }
+        public CommandOption(string pickup, string tier, bool available, bool specialPickup = false)
+        { Pickup = pickup; Tier = tier; Available = available; SpecialPickup = specialPickup; }
     }
 
     public static class CommandSelection
     {
+        // Automatic essence interaction requires a real queue entry, even in exclusive Automatic mode.
+        public static bool HasQueuedChoice(QueueState queue, IReadOnlyList<CommandOption> options, string sourceTier,
+            Func<string, string> tierOf, Func<string, bool> isExclusive, ExclusiveItemBehavior behavior)
+        {
+            int option = FindOption(queue, options, sourceTier, tierOf, isExclusive, behavior);
+            return option >= 0 && FindQueueEntry(queue, options, options[option].Tier, tierOf, isExclusive) >= 0;
+        }
         // The essence decides the tier. Display grouping and option ordering must never decide it.
         public static int FindOption(QueueState queue, IReadOnlyList<CommandOption> options, string sourceTier,
             Func<string, string> tierOf, Func<string, bool> isExclusive = null,
@@ -36,6 +44,7 @@ namespace CommandQueueRemastered.Core
                 {
                     var option = options[index];
                     if (option.Available && option.Tier == sourceTier && !queue.IsPickupPaused(option.Pickup) &&
+                        (queue.IsPickupAllowed == null || queue.IsPickupAllowed(option.Pickup)) &&
                         (exclusiveBehavior == ExclusiveItemBehavior.Automatic ||
                          queue.FindPickup(option.Pickup, option.Tier) >= 0)) return index;
                 }
@@ -57,11 +66,14 @@ namespace CommandQueueRemastered.Core
             Func<string, string> tierOf, Func<string, bool> isExclusive = null, bool resetRepeatCycle = false)
         {
             if (IsExclusiveEssence(options, isExclusive))
-                return queue.FindPickup(options[0].Pickup, tier, resetRepeatCycle);
-            // Only absent exclusive pickups may be bypassed. An offered but unavailable
-            // item, or a missing regular item, must still keep the normal picker open.
+                return queue.IsPickupAllowed != null && !queue.IsPickupAllowed(options[0].Pickup) ? -1 : queue.FindPickup(options[0].Pickup, tier, resetRepeatCycle);
+            // Special pools exclude some regular items. Bypass those entries without consuming
+            // them; permanent pools retain their strict head rule (except absent exclusives).
+            bool specialPool = options.Any(option => option.SpecialPickup);
             return queue.FindHead(tier, tierOf, resetRepeatCycle, pickup =>
-                isExclusive == null || !isExclusive(pickup) || options.Any(option => option.Pickup == pickup));
+                (queue.IsPickupAllowed == null || queue.IsPickupAllowed(pickup)) &&
+                (!specialPool || options.Any(option => option.Pickup == pickup && option.Tier == tier && option.Available)) &&
+                (isExclusive == null || !isExclusive(pickup) || options.Any(option => option.Pickup == pickup)));
         }
 
         public static bool IsExclusiveEssence(IReadOnlyList<CommandOption> options, Func<string, bool> isExclusive)

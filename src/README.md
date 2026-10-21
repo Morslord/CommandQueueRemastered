@@ -1,4 +1,4 @@
-# Building CommandQueue Remastered 0.3.4
+# Building CommandQueue Remastered 0.4.1
 
 The mod targets .NET Standard 2.1 and references the installed Risk of Rain 2 1.5.0 assemblies.
 
@@ -32,7 +32,11 @@ Run the core checks separately:
 dotnet run --project tests/CoreChecks -c Release
 ```
 
-These checks exercise queue behavior, selection and menu-input policies, description formatting and legacy preset import without launching the game. They do not validate Unity rendering, runtime hooks or multiplayer behavior.
+These checks exercise queue behavior, selection and menu-input policies, description formatting, legacy preset import, preset formatting, essence distribution and single-use collection tickets without launching the game. They do not validate Unity rendering, runtime hooks, item-transfer orb delivery or multiplayer behavior.
+
+Additional checks cover pause-based distribution filtering, remote pause state ownership/expiry and queue-only eligibility for automatic essence interaction. Automatic interaction uses the game's Interactor; optional host-requested pause reporting uses a versioned UNet message with a protocol marker and preserves foreign message handlers on channel conflicts. These runtime/network paths still need in-game validation.
+
+Bounded-work regressions exercise an 18-drop burst in 4/4/4/4/2 batches, FIFO draining, candidate priority among 10,000 registered entries, removal/re-enabling and cancellation during callbacks. They verify scheduling rules without measuring Unity frame time or proving native spawn/physics/network behavior.
 
 ## Required source files
 
@@ -46,3 +50,9 @@ Keep these files and directories in their repository locations:
 
 The `tools/` directory is optional and is not required to compile the mod. Generated `bin/`, `obj/` and `.vs/` directories are not needed to rebuild it.
 
+
+0.4.1 checks additionally cover unique limiter stacks, cap-aware selection and Repeat, version 1/2 document migration, group-scoped limiter presets, distribution exclusions, pending assignment accounting and Hex blocks of seven. Native source-context and reservation-lifecycle hooks require in-game host/client validation.
+
+Special-pool regressions cover absent/unavailable heads, tier/limiter/pause guards, no-consumption and both Repeat modes, changed pools and exclusive choices. Drifter Salvage uses a single Original/SkillUser/ItemDistribution dropdown with SkillUser default; its native source-context hook still needs in-game validation.
+
+Personal temporary/ethereal Ignore flags use additive message kind 3 on the existing signed/versioned status channel, with a two-bit mask. Clients report only their own NetworkUser, host checks connection ownership; states expire after five seconds with one-second heartbeats. Unknown/old clients remain eligible. Status queries run while distribution is enabled independently of ExcludePausedPlayers. Drifter caster identity is captured in the native source scope and stored per deferred recipient; separate simultaneous casters do not share a target. New network/source paths require in-game validation.

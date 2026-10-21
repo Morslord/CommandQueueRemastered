@@ -43,6 +43,14 @@ namespace CommandQueueRemastered.Game
         public static string GroupOf(string pickup) => Group(Definition(pickup));
         public static string GroupOfTier(string tier) => Enum.TryParse(tier, out ItemTier value) ? Group(value) : null;
         public static string PickupName(ItemDef item) => PickupCatalog.GetPickupDef(PickupCatalog.FindPickupIndex(item.itemIndex))?.internalName;
+        public static int PreviewTierOrder(string pickup)
+        {
+            var item = Definition(pickup);
+            int group = Array.IndexOf(Names, Group(item));
+            if (!item || group < 0) return int.MaxValue;
+            int subTier = item.tier == ItemTier.VoidTier2 ? 1 : item.tier == ItemTier.VoidTier3 ? 2 : item.tier == ItemTier.VoidBoss ? 3 : 0;
+            return group * 10 + subTier;
+        }
         public static bool IsExclusivePickup(string pickup)
         {
             var item = Definition(pickup);
@@ -70,7 +78,8 @@ namespace CommandQueueRemastered.Game
         public static IEnumerable<ItemDef> Available(string group)
         {
             if (!Run.instance) return Enumerable.Empty<ItemDef>();
-            return ItemCatalog.allItemDefs.Where(item => !item.hidden && Group(item) == group && Run.instance.availableItems.Contains(item.itemIndex));
+            return ItemCatalog.allItemDefs.Where(item => !item.hidden && Group(item) == group && Run.instance.availableItems.Contains(item.itemIndex))
+                .OrderBy(item => (int)item.itemIndex);
         }
     }
 }
