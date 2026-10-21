@@ -81,7 +81,9 @@ namespace CommandQueueRemastered.Integrations
                 {
                     var valid = document.Queue.Where(entry => ItemGroups.Definition(entry.Pickup)).ToList();
                     int skipped = document.Queue.Except(valid).Sum(entry => entry.Count);
-                    plugin.Queue.Replace(valid, document.RepeatedTiers);
+                    document.Queue = valid;
+                    document.Limits = document.Limits.Where(entry => ItemGroups.Definition(entry.Pickup)).ToList();
+                    document.Apply(plugin.Queue);
                     plugin.LogInfo("ProperSave restored " + valid.Sum(entry => entry.Count) + " queued items; skipped " + skipped + " unavailable items.");
                 }
                 catch (Exception exception) { plugin.LogError("ProperSave queue restore failed", exception); }

@@ -1,11 +1,9 @@
 {
   "name": "CommandQueueRemastered",
   "author": "morslord",
-  "version_number": "0.4.0",
+  "version_number": "0.4.1",
   "website_url": "https://github.com/Morslord/CommandQueueRemastered",
   "description": "Plan Command item queues in the game scoreboard with item icons, permanent inventory counts, descriptions, presets and optional mod integrations.",
-  "dependencies": [
-    "bbepis-BepInExPack-5.4.2121"
-  ]
+  "dependencies": ["bbepis-BepInExPack-5.4.2121"]
 }
 

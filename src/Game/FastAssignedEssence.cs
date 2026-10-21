@@ -14,6 +14,7 @@ namespace CommandQueueRemastered.Game
         internal readonly Vector3 OriginalPosition, OriginalVelocity;
         internal readonly CharacterMaster Recipient;
         internal PickupDropletController CreatedDroplet;
+        internal DistributionReservation Reservation;
         internal DeferredEssenceDrop(GenericPickupController.CreatePickupInfo info, Vector3 position,
             Vector3 velocity, CharacterMaster recipient)
         {
@@ -23,6 +24,10 @@ namespace CommandQueueRemastered.Game
             if (info.pickerOptions != null)
                 info.pickerOptions = (PickupPickerController.Option[])info.pickerOptions.Clone();
             Info = info; OriginalPosition = position; OriginalVelocity = velocity; Recipient = recipient;
+            var pickup = PickupCatalog.GetPickupDef(info.pickup.pickupIndex);
+            var item = pickup == null ? null : ItemCatalog.GetItemDef(pickup.itemIndex);
+            if (!info.pickup.isTempItem && !info.pickup.isRental && pickup != null)
+                Reservation = EssenceAssignments.Ledger.Reserve(recipient.netId.Value, (item ? item.tier : pickup.itemTier).ToString());
         }
     }
 
@@ -47,7 +52,11 @@ namespace CommandQueueRemastered.Game
         }
         internal static void Capture(PickupDropletController droplet)
         {
-            if (creating != null && !replayNext && !creating.CreatedDroplet) creating.CreatedDroplet = droplet;
+            if (creating != null && !replayNext && !creating.CreatedDroplet)
+            {
+                creating.CreatedDroplet = droplet;
+                EssenceAssignments.Attach(droplet.gameObject, creating.Reservation);
+            }
         }
         internal static void Process()
         {
@@ -57,7 +66,9 @@ namespace CommandQueueRemastered.Game
             try
             {
                 var recipient = request.Recipient ? request.Recipient.GetBody() : null;
-                bool assigned = recipient && recipient.healthComponent && recipient.healthComponent.alive;
+                bool assigned = recipient && recipient.healthComponent && recipient.healthComponent.alive &&
+                    !RemasteredPlugin.Instance.PlayerIgnores(request.Recipient, request.Info.pickup);
+                if (!assigned) { EssenceAssignments.Release(request.Reservation); request.Reservation = null; }
                 var position = assigned ? recipient.corePosition : request.OriginalPosition;
                 var info = request.Info; info.position = position;
                 creating = request; replayNext = true;

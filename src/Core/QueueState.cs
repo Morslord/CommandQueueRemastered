@@ -39,10 +39,18 @@ namespace CommandQueueRemastered.Core
             set { if (rotateRepeatedItems != value) { rotateRepeatedItems = value; NotifyChanged(); } }
         }
         private void NotifyChanged() { repeatProgress.Clear(); Changed?.Invoke(); }
-        public QueueState(Func<string, string> groupOf = null) { this.groupOf = groupOf ?? (_ => "Queue"); }
+        public ItemLimiter Limiter { get; }
+        public QueueState(Func<string, string> groupOf = null)
+        {
+            this.groupOf = groupOf ?? (_ => "Queue");
+            Limiter = new ItemLimiter(this.groupOf);
+            Limiter.Changed += () => Changed?.Invoke();
+        }
         public IReadOnlyList<QueueEntry> Entries => entries;
         public IReadOnlyCollection<string> RepeatedTiers => repeatedTiers;
         public event Action Changed;
+        // Runtime inventory predicate; never serialized. Blocked entries remain untouched.
+        public Func<string, bool> IsPickupAllowed { get; set; }
 
         public void Enqueue(string pickup, int count = 1, bool atFront = false)
         {
@@ -203,7 +211,7 @@ namespace CommandQueueRemastered.Core
         }
 
         public void Clear() { entries.Clear(); NotifyChanged(); }
-        public void Reset() { entries.Clear(); repeatedTiers.Clear(); pausedGroups.Clear(); NotifyChanged(); }
+        public void Reset() { entries.Clear(); repeatedTiers.Clear(); pausedGroups.Clear(); Limiter.Reset(); NotifyChanged(); }
         public List<QueueEntry> Snapshot() => entries.Select(entry => entry.Copy()).ToList();
 
         public void Replace(IEnumerable<QueueEntry> source, IEnumerable<string> repeats = null)

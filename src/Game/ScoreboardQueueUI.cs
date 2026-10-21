@@ -31,6 +31,12 @@ namespace CommandQueueRemastered.Game
         private Image ghostVoidMarker;
         private Image repeatImage;
         private Image pauseImage;
+        private Image limiterImage;
+        private TextMeshProUGUI powerLabel, moveHelp;
+        private RectTransform repeatControl, limiterControl, sortControl;
+        private Image queueTabImage, limiterTabImage;
+        private bool limiterView;
+        private IReadOnlyList<QueueEntry> DisplayEntries => limiterView ? plugin.Queue.Limiter.Entries : plugin.Queue.Entries;
         private RectTransform presetMarker, presetGhost;
         private TextMeshProUGUI presetGhostLabel;
         private readonly List<PresetRowButton> presetRows = new List<PresetRowButton>();
@@ -43,6 +49,7 @@ namespace CommandQueueRemastered.Game
         private int confirmationEscapeFrame = -1;
         private static readonly Color NeutralActionColor = new Color(0.16f, 0.19f, 0.24f, 1);
         private static readonly Color RepeatActionColor = new Color(0.19f, 0.32f, 0.23f, 1);
+        private static readonly Color LimiterMarkerColor = new Color32(160, 166, 173, 255);
         private static readonly Color ClearActionColor = new Color(0.34f, 0.19f, 0.20f, 1);
         private static readonly Color PauseActionColor = new Color(0.72f, 0.46f, 0.08f, 1);
         internal bool SuppressPauseShortcut => confirmationEscapeFrame == Time.frameCount ||
@@ -62,9 +69,12 @@ namespace CommandQueueRemastered.Game
         private string group = "White", renameId, selectedSaveId, settingsSignature;
         private ItemDef described;
         private QueuePreset previewPreset;
+        private string lastPreviewId;
         private QueueItemButton dragged;
         private int dropBoundary = -1;
         private float nextRefresh;
+        private readonly List<RaycastResult> essenceUiHits = new List<RaycastResult>();
+        private PointerEventData essencePointer;
         private const float Width = 1280, Height = 720;
         private LocalUser User => hud ? hud.localUserViewer : null;
         public MenuInputMode InputMode(LocalUser user)
@@ -72,6 +82,25 @@ namespace CommandQueueRemastered.Game
             bool active = user != null && user == User && !failed && isActiveAndEnabled && HUD.IsScoreboardActive(user);
             return MenuInputPolicy.Resolve(active, plugin.BlockGameplayInput.Value, queueView,
                 user != null && user.pauseScreenController != null);
+        }
+        internal bool AllowsEssenceInteraction(LocalUser user)
+        {
+            if (user == null || user != User || failed || !isActiveAndEnabled || !HUD.IsScoreboardActive(user) ||
+                user.pauseScreenController || !root || !root.gameObject.activeInHierarchy ||
+                clearConfirmation.gameObject.activeSelf || dragged || draggedPreset || (nameInput && nameInput.isFocused) ||
+                SimpleDialogBox.instancesList.Any(dialog => dialog && dialog.isActiveAndEnabled)) return false;
+            var system = user.eventSystem;
+            if (!system) return false;
+            var selected = system.currentSelectedGameObject;
+            if (selected && selected.activeInHierarchy && !selected.transform.IsChildOf(scoreboard.transform)) return false;
+            if (system.IsPointerOverGameObject())
+            {
+                if (essencePointer == null) essencePointer = new PointerEventData(system);
+                essencePointer.position = Input.mousePosition; essenceUiHits.Clear();
+                system.RaycastAll(essencePointer, essenceUiHits);
+                if (essenceUiHits.Count > 0 && !essenceUiHits[0].gameObject.transform.IsChildOf(scoreboard.transform)) return false;
+            }
+            return true;
         }
         private Camera EventCamera => root.GetComponentInParent<Canvas>().rootCanvas.worldCamera;
         private static bool Shift => Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
@@ -116,16 +145,27 @@ namespace CommandQueueRemastered.Game
             var repeatButton = Button(actions, "Repeat", ToggleRepeat);
             repeatLabel = repeatButton.GetComponentInChildren<TextMeshProUGUI>();
             repeatImage = repeatButton.GetComponent<Image>();
-            Place(repeatButton, 0, 0, 0.22f, 1);
-            var pauseButton = Button(actions, "Pause", () => Act(() => { if (!string.IsNullOrEmpty(group)) plugin.Queue.TogglePause(group); }));
-            pauseImage = pauseButton.GetComponent<Image>();
-            Place(pauseButton, 0.23f, 0, 0.45f, 1);
-            Place(Button(actions, "Clear group", () => Act(() => plugin.Queue.Replace(
-                plugin.Queue.Entries.Where(entry => ItemGroups.GroupOf(entry.Pickup) != group).Select(entry => entry.Copy()).ToList(),
-                plugin.Queue.RepeatedTiers.ToArray()))), 0.46f, 0, 0.72f, 1);
-            var clearButton = Button(actions, "Clear all", OpenClearConfirmation);
+            repeatControl = repeatButton;
+            Place(repeatButton, 0.32f, 0, 0.47f, 1);
+            var queueTab = Button(actions, "Queue", () => SetLimiterView(false));
+            queueTabImage = queueTab.GetComponent<Image>(); Place(queueTab, 0, 0, 0.15f, 1);
+            var limiterTab = Button(actions, "Limiter", () => SetLimiterView(true));
+            limiterTabImage = limiterTab.GetComponent<Image>(); Place(limiterTab, 0.16f, 0, 0.31f, 1);
+            limiterControl = Button(actions, "Limiter: On", () => Act(() => plugin.Queue.Limiter.Toggle(group)));
+            limiterImage = limiterControl.GetComponent<Image>();
+            powerLabel = limiterControl.GetComponentInChildren<TextMeshProUGUI>();
+            Place(limiterControl, 0.32f, 0, 0.47f, 1); limiterControl.gameObject.SetActive(false);
+            var pauseButton = Button(actions, "Pause", () => Act(() => plugin.Queue.TogglePause(group)));
+            pauseImage = pauseButton.GetComponent<Image>(); Place(pauseButton, 0.53f, 0, 0.68f, 1);
+            Place(Button(actions, "Clear Group", () => Act(() =>
+            {
+                if (limiterView) plugin.Queue.Limiter.Clear(group);
+                else plugin.Queue.Replace(plugin.Queue.Entries.Where(entry => ItemGroups.GroupOf(entry.Pickup) != group)
+                    .Select(entry => entry.Copy()).ToList(), plugin.Queue.RepeatedTiers.ToArray());
+            })), 0.69f, 0, 0.84f, 1);
+            var clearButton = Button(actions, "Clear All", OpenClearConfirmation);
             clearButton.GetComponent<Image>().color = ClearActionColor;
-            Place(clearButton, 0.73f, 0, 0.99f, 1);
+            Place(clearButton, 0.85f, 0, 1, 1);
             queueScroll = Scroll(panel, "Queued items", 0.01f, 0.72f, 0.68f, 0.88f, out queueContent);
             var queueGrid = queueContent.gameObject.AddComponent<GridLayoutGroup>();
             queueGrid.spacing = new Vector2(7, 7); queueGrid.padding = new RectOffset(8, 8, 8, 8);
@@ -139,11 +179,14 @@ namespace CommandQueueRemastered.Game
             Place(clickHelp.rectTransform, 0, 0, 0.60f, 1);
             clickHelp.enableWordWrapping = false;
             clickHelp.enableAutoSizing = true; clickHelp.fontSizeMin = 12; clickHelp.fontSizeMax = 14;
-            var moveHelp = Label(shortcutHelp, QueueInteraction.DragHelp, 14);
+            moveHelp = Label(shortcutHelp, QueueInteraction.DragHelp, 14);
             Place(moveHelp.rectTransform, 0.61f, 0.5f, 1, 1);
             moveHelp.alignment = TextAlignmentOptions.TopRight;
             moveHelp.enableWordWrapping = false;
             moveHelp.enableAutoSizing = true; moveHelp.fontSizeMin = 12; moveHelp.fontSizeMax = 14;
+            sortControl = Button(shortcutHelp, "Sort by ID", () => Act(() => plugin.Queue.Limiter.Sort(group,
+                pickup => (int)ItemGroups.Definition(pickup).itemIndex)));
+            Place(sortControl, 0.73f, 0.1f, 1, 0.9f); sortControl.gameObject.SetActive(false);
             itemScroll = Scroll(panel, "Available items", 0.01f, 0.26f, 0.68f, 0.70f, out itemContent);
             itemScroll.horizontalScrollbar.gameObject.SetActive(false);
             itemScroll.viewport.offsetMin = Vector2.zero;
@@ -363,7 +406,7 @@ namespace CommandQueueRemastered.Game
             foreach (var pair in groupButtons) { pair.Value.gameObject.SetActive(plugin.GroupEnabled(pair.Key)); pair.Value.interactable = pair.Key != group; }
             foreach (var tile in tiles) if (tile) { tile.gameObject.SetActive(false); Destroy(tile.gameObject); }
             tiles.Clear(); queuedTiles.Clear();
-            foreach (var entry in plugin.Queue.Entries)
+            foreach (var entry in DisplayEntries)
             {
                 var item = ItemGroups.Definition(entry.Pickup);
                 if (item && ItemGroups.Group(item) == group) queuedTiles.Add(CreateTile(queueContent, item, entry));
@@ -396,9 +439,21 @@ namespace CommandQueueRemastered.Game
             UpdatePreview();
             var tiers = ItemGroups.Available(group).Select(item => item.tier.ToString()).Distinct().ToArray();
             bool repeating = tiers.Length > 0 && tiers.All(plugin.Queue.IsRepeated);
-            repeatLabel.text = repeating ? "Repeat: on" : "Repeat: off";
+            repeatLabel.text = repeating ? "Repeat: On" : "Repeat: Off";
             repeatImage.color = repeating ? RepeatActionColor : NeutralActionColor;
+            bool powered = plugin.Queue.Limiter.Enabled(group);
+            powerLabel.text = powered ? "Limiter: On" : "Limiter: Off";
+            limiterImage.color = powered ? RepeatActionColor : NeutralActionColor;
             pauseImage.color = plugin.Queue.IsGroupPaused(group) ? PauseActionColor : NeutralActionColor;
+            repeatControl.gameObject.SetActive(!limiterView);
+            limiterControl.gameObject.SetActive(limiterView);
+            shortcutClickHelp.text = limiterView
+                ? "Left-click: +1  |  Shift-left: +10\n" + QueueInteraction.RemoveHelp
+                : QueueInteraction.ClickHelp + "\n" + QueueInteraction.RemoveHelp;
+            moveHelp.gameObject.SetActive(!limiterView);
+            sortControl.gameObject.SetActive(limiterView);
+            queueTabImage.color = !limiterView ? RepeatActionColor : NeutralActionColor;
+            limiterTabImage.color = limiterView ? RepeatActionColor : NeutralActionColor;
             if (!clearConfirmation.gameObject.activeSelf && User?.eventSystem && tiles.Count > 0)
             {
                 var selected = User.eventSystem.currentSelectedGameObject;
@@ -415,6 +470,8 @@ namespace CommandQueueRemastered.Game
             Place(shortcutHelp, 0.015f, bottom - (4 + helpHeight) / panel.rect.height, 0.68f, bottom - 4 / panel.rect.height);
             Place(itemScroll.GetComponent<RectTransform>(), 0.01f, 0.26f, 0.68f, bottom - (8 + helpHeight) / panel.rect.height);
         }
+        private void SetLimiterView(bool value)
+        { if (limiterView == value) return; CancelDrag(); limiterView = value; dirty = true; queueScroll.verticalNormalizedPosition = 1; }
         private QueueItemButton CreateTile(RectTransform parent, ItemDef item, QueueEntry entry)
         {
             var rect = Rect("Item " + item.name, parent); rect.sizeDelta = Vector2.one * (RemasteredPlugin.ItemIconBaseSize * plugin.ItemScale.Value);
@@ -424,7 +481,10 @@ namespace CommandQueueRemastered.Game
             var image = graphic.gameObject.AddComponent<Image>(); image.raycastTarget = false; image.preserveAspect = true;
             AddVoidMarker(rect, item);
             var count = Label(rect, "", 18); Place(count.rectTransform, 0, 0, 1, 0.32f); count.alignment = TextAlignmentOptions.BottomRight;
-            tile.Initialize(this, item, entry, image, count); tiles.Add(tile); return tile;
+            count.enableWordWrapping = false; count.enableAutoSizing = true; count.fontSizeMin = 10; count.fontSizeMax = 18;
+            var strip = Rect("Active Limiter", rect); Place(strip, 0, 0, 1, 0.04f);
+            var limiterMarker = strip.gameObject.AddComponent<PixelAlignedStrip>(); limiterMarker.color = LimiterMarkerColor; limiterMarker.raycastTarget = false;
+            tile.Initialize(this, item, entry, image, count, limiterMarker); tiles.Add(tile); return tile;
         }
         private void Save() => Act(() =>
         {
@@ -437,7 +497,7 @@ namespace CommandQueueRemastered.Game
             clearConfirmation = Box("Clear all confirmation", root, Vector2.zero, Vector2.one);
             clearConfirmation.GetComponent<Image>().color = new Color(0, 0, 0, 0.65f);
             var dialog = Box("Confirmation", clearConfirmation, new Vector2(0.28f, 0.36f), new Vector2(0.72f, 0.64f));
-            var question = Label(dialog, "Clear all queues?", 22);
+            var question = Label(dialog, "Clear all items in this view?", 22);
             question.alignment = TextAlignmentOptions.Center;
             Place(question.rectTransform, 0.04f, 0.65f, 0.96f, 0.93f);
             var detail = Label(dialog, "All queued items will be removed.", 17);
@@ -446,7 +506,8 @@ namespace CommandQueueRemastered.Game
             var cancel = Button(dialog, "Cancel", CloseClearConfirmation);
             cancelClearButton = cancel.GetComponent<Button>();
             Place(cancel, 0.53f, 0.08f, 0.94f, 0.30f);
-            var confirm = Button(dialog, "Clear all", () => { CloseClearConfirmation(); Act(plugin.Queue.Clear); });
+            var confirm = Button(dialog, "Clear All", () => { CloseClearConfirmation(); Act(() =>
+                { if (limiterView) plugin.Queue.Limiter.Clear(); else plugin.Queue.Clear(); }); });
             confirm.GetComponent<Image>().color = ClearActionColor;
             Place(confirm, 0.06f, 0.08f, 0.47f, 0.30f);
             clearConfirmation.gameObject.SetActive(false);
@@ -495,21 +556,24 @@ namespace CommandQueueRemastered.Game
             previewIcons.Clear();
             if (!visible) return;
             previewTitle.text = "<noparse>" + previewPreset.Name + "</noparse>";
-            previewScroll.verticalNormalizedPosition = 1;
+            if (lastPreviewId != previewPreset.Id) previewScroll.verticalNormalizedPosition = 1;
+            lastPreviewId = previewPreset.Id;
             var grid = previewContent.GetComponent<GridLayoutGroup>();
             float size = RemasteredPlugin.ItemIconBaseSize * 0.75f * plugin.ItemScale.Value;
             grid.cellSize = Vector2.one * size;
             grid.constraintCount = Math.Max(1, (int)((previewScroll.viewport.rect.width - 12) / (size + 6)));
-            foreach (var entry in previewPreset.Document.Queue)
+            foreach (var entry in PresetPreview.Build(previewPreset.Document, ItemGroups.PreviewTierOrder))
             {
                 var rect = Box("Preview item " + entry.Pickup, previewContent, Vector2.zero, Vector2.one);
                 var icon = Rect("Icon", rect); Stretch(icon); icon.offsetMin = new Vector2(3, 3); icon.offsetMax = new Vector2(-3, -3);
                 var image = icon.gameObject.AddComponent<Image>(); image.preserveAspect = true; image.raycastTarget = false;
                 AddVoidMarker(rect, ItemGroups.Definition(entry.Pickup));
-                var count = Label(rect, "×" + entry.Count, 16); Place(count.rectTransform, 0, 0, 1, 0.35f);
+                var count = Label(rect, entry.Badge, 16); Place(count.rectTransform, 0, 0, 1, 0.35f);
                 count.alignment = TextAlignmentOptions.BottomRight;
+                count.enableWordWrapping = false; count.enableAutoSizing = true; count.fontSizeMin = 9; count.fontSizeMax = 16;
+                count.color = entry.LimiterOnly ? Color.gray : Color.white;
                 var tile = rect.gameObject.AddComponent<QueuePreviewIcon>();
-                tile.Initialize(this, ItemGroups.Definition(entry.Pickup), image);
+                tile.Initialize(this, ItemGroups.Definition(entry.Pickup), image, entry.LimiterOnly);
                 previewIcons.Add(tile);
                 if (!ItemGroups.Definition(entry.Pickup))
                 { var missing = Label(rect, "?", 24); Stretch(missing.rectTransform); missing.alignment = TextAlignmentOptions.Center; }
@@ -543,6 +607,8 @@ namespace CommandQueueRemastered.Game
             }
             long total = entries.Sum(entry => (long)entry.Count);
             if (total > 0) parts.Add("Total " + total);
+            int limits = preset.Document.Limits?.Count ?? 0;
+            if (limits > 0) parts.Add("Limits " + limits);
             return string.Join("  ", parts);
         }
         internal void Describe(ItemDef item)
@@ -568,6 +634,14 @@ namespace CommandQueueRemastered.Game
             Describe(tile.Item);
             Act(() =>
             {
+                string pickup = ItemGroups.PickupName(tile.Item);
+                if (limiterView)
+                {
+                    if (button == PointerEventData.InputButton.Right)
+                        plugin.Queue.Limiter.Remove(pickup, QueueInteraction.DecreaseCount(plugin.Queue.Limiter.Limit(pickup) ?? 0, Shift, Control));
+                    else if (button == PointerEventData.InputButton.Left) plugin.Queue.Limiter.Add(pickup, QueueInteraction.ClickCount(Shift));
+                    return;
+                }
                 int index = plugin.Queue.Entries.ToList().IndexOf(tile.Entry);
                 if (button == PointerEventData.InputButton.Right)
                 { if (index >= 0) plugin.Queue.RemoveQuantity(index, QueueInteraction.DecreaseCount(tile.Entry.Count, Shift, Control)); }
@@ -577,7 +651,26 @@ namespace CommandQueueRemastered.Game
         }
         internal Sprite Sprite(ItemDef item) => icons.Get(item);
         internal void ScrollPreview(PointerEventData data) => previewScroll.OnScroll(data);
-        internal int Count(ItemDef item) => User?.cachedMaster && User.cachedMaster.inventory ? User.cachedMaster.inventory.GetItemCountPermanent(item.itemIndex) : 0;
+        internal long Count(ItemDef item)
+        {
+            var inventory = User?.cachedMaster ? User.cachedMaster.inventory : null;
+            if (!inventory) return 0;
+            return plugin.Queue.Limiter.Limit(ItemGroups.PickupName(item)).HasValue
+                ? plugin.CountForLimiter(inventory, item) : inventory.GetItemCountPermanent(item.itemIndex);
+        }
+        internal bool HasActiveLimiter(ItemDef item) => !limiterView && plugin.Queue.Limiter.Enabled(ItemGroups.Group(item)) &&
+            plugin.Queue.Limiter.Limit(ItemGroups.PickupName(item)).HasValue;
+        internal bool Limited(ItemDef item) => plugin.Queue.Limiter.Blocks(ItemGroups.PickupName(item), Count(item));
+        internal string InventoryLabel(ItemDef item)
+        {
+            string pickup = ItemGroups.PickupName(item);
+            int? limit = plugin.Queue.Limiter.Limit(pickup);
+            if (!limit.HasValue) return "×" + Count(item);
+            string target = limit.Value.ToString();
+            if (!plugin.Queue.Limiter.Enabled(ItemGroups.Group(item))) target = "<color=#888888>" + target + "</color>";
+            return Count(item) + "/" + target;
+        }
+        internal bool DimQueueItem(ItemDef item) => !limiterView && Limited(item);
         internal void BeginDrag(QueueItemButton tile, PointerEventData data)
         {
             if (tile.Entry == null || data.button != PointerEventData.InputButton.Left) return;
@@ -592,7 +685,7 @@ namespace CommandQueueRemastered.Game
             if (isVoid) ghostVoidMarker.color = color;
             RectTransformUtility.ScreenPointToLocalPointInRectangle(root, pointer, EventCamera, out var local);
             ghost.anchoredPosition = local + new Vector2(18, -18);
-            ghostCount.text = "×" + QueueInteraction.DragCount(dragged.Entry.Count, Shift, Control);
+            ghostCount.text = "×" + (limiterView ? dragged.Entry.Count : QueueInteraction.DragCount(dragged.Entry.Count, Shift, Control));
             dropBoundary = -1; marker.gameObject.SetActive(false);
             if (!RectTransformUtility.RectangleContainsScreenPoint(queueScroll.viewport, pointer, EventCamera)) return;
             RectTransformUtility.ScreenPointToLocalPointInRectangle(queueContent, pointer, EventCamera, out var position);
@@ -603,7 +696,7 @@ namespace CommandQueueRemastered.Game
             bool before = boundary < queuedTiles.Count;
             var target = queuedTiles[before ? boundary : boundary - 1];
             var rect = (RectTransform)target.transform;
-            int index = plugin.Queue.Entries.ToList().IndexOf(target.Entry);
+            int index = DisplayEntries.ToList().IndexOf(target.Entry);
             if (index < 0) return;
             dropBoundary = index + (before ? 0 : 1);
             marker.anchorMin = marker.anchorMax = new Vector2(0.5f, 1); marker.pivot = new Vector2(0.5f, 1);
@@ -616,10 +709,11 @@ namespace CommandQueueRemastered.Game
         {
             if (!dragged) return;
             UpdateDrag(data.position);
-            int source = plugin.Queue.Entries.ToList().IndexOf(dragged.Entry);
-            int amount = QueueInteraction.DragCount(dragged.Entry.Count, Shift, Control), boundary = dropBoundary;
+            int source = DisplayEntries.ToList().IndexOf(dragged.Entry);
+            int amount = limiterView ? dragged.Entry.Count : QueueInteraction.DragCount(dragged.Entry.Count, Shift, Control), boundary = dropBoundary;
             CancelDrag();
-            if (source >= 0 && boundary >= 0 && amount > 0) Act(() => plugin.Queue.MoveToBoundary(source, boundary, amount));
+            if (source >= 0 && boundary >= 0 && amount > 0) Act(() =>
+            { if (limiterView) plugin.Queue.Limiter.MoveToBoundary(source, boundary); else plugin.Queue.MoveToBoundary(source, boundary, amount); });
         }
         private void CancelDrag()
         {
@@ -714,7 +808,7 @@ namespace CommandQueueRemastered.Game
             var marker = Rect("Void tier color", parent);
             // Full-width strip at the tile's outer top edge, inside its unchanged bounds.
             Place(marker, 0, 0.96f, 1, 1);
-            var image = marker.gameObject.AddComponent<Image>(); image.color = color; image.raycastTarget = false;
+            var image = marker.gameObject.AddComponent<PixelAlignedStrip>(); image.AlignTop = true; image.color = color; image.raycastTarget = false;
         }
         private TextMeshProUGUI Label(Transform parent, string text, float size)
         {
@@ -730,6 +824,7 @@ namespace CommandQueueRemastered.Game
             Button button = presetRow ? rect.gameObject.AddComponent<PresetRowButton>() : rect.gameObject.AddComponent<Button>();
             button.targetGraphic = image; button.onClick.AddListener(() => action());
             var label = Label(rect, text, 17); Stretch(label.rectTransform); label.alignment = TextAlignmentOptions.Center;
+            if (!presetRow) { label.enableWordWrapping = false; label.enableAutoSizing = true; label.fontSizeMin = 12; label.fontSizeMax = 17; }
             return rect;
         }
         private TMP_InputField InputField(Transform parent)
@@ -810,8 +905,8 @@ namespace CommandQueueRemastered.Game
         private ScoreboardQueueUI owner;
         private ItemDef item;
         private Image image;
-        internal void Initialize(ScoreboardQueueUI ui, ItemDef definition, Image graphic)
-        { owner = ui; item = definition; image = graphic; Refresh(); }
+        internal void Initialize(ScoreboardQueueUI ui, ItemDef definition, Image graphic, bool dimmed = false)
+        { owner = ui; item = definition; image = graphic; image.color = dimmed ? new Color(0.35f, 0.35f, 0.35f, 0.65f) : Color.white; Refresh(); }
         internal void Refresh() { if (item) image.sprite = owner.Sprite(item); }
         public void OnPointerEnter(PointerEventData data) { if (item) owner.Describe(item); }
         public void OnScroll(PointerEventData data) { owner.ScrollPreview(data); data.Use(); }
@@ -821,14 +916,22 @@ namespace CommandQueueRemastered.Game
     {
         private ScoreboardQueueUI owner;
         private Image iconImage;
+        private PixelAlignedStrip limiterMarker;
         private TextMeshProUGUI count;
         private bool wasDragged;
         internal ItemDef Item { get; private set; }
         internal QueueEntry Entry { get; private set; }
-        internal void Initialize(ScoreboardQueueUI ui, ItemDef item, QueueEntry entry, Image icon, TextMeshProUGUI text)
-        { owner = ui; Item = item; Entry = entry; iconImage = icon; count = text; Refresh(); }
+        internal void Initialize(ScoreboardQueueUI ui, ItemDef item, QueueEntry entry, Image icon, TextMeshProUGUI text, PixelAlignedStrip marker)
+        { owner = ui; Item = item; Entry = entry; iconImage = icon; count = text; limiterMarker = marker; Refresh(); }
         internal void Refresh()
-        { iconImage.sprite = owner.Sprite(Item); count.text = "×" + (Entry?.Count ?? owner.Count(Item)); count.color = Entry == null && owner.Count(Item) == 0 ? Color.gray : Color.white; }
+        {
+            iconImage.sprite = owner.Sprite(Item);
+            if (limiterMarker) limiterMarker.gameObject.SetActive(owner.HasActiveLimiter(Item));
+            bool dim = Entry != null && owner.DimQueueItem(Item);
+            iconImage.color = dim ? new Color(0.35f, 0.35f, 0.35f, 0.65f) : Color.white;
+            count.text = Entry == null ? owner.InventoryLabel(Item) : "×" + Entry.Count;
+            count.color = dim || (Entry == null && owner.Count(Item) == 0) ? Color.gray : Color.white;
+        }
         public override void OnPointerEnter(PointerEventData data) { base.OnPointerEnter(data); owner.Describe(Item); }
         public override void OnPointerDown(PointerEventData data) { wasDragged = false; base.OnPointerDown(data); }
         public override void OnPointerClick(PointerEventData data) { if (!wasDragged) owner.Click(this, data.button); wasDragged = false; }

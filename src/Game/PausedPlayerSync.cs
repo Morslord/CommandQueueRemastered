@@ -8,13 +8,14 @@ using UnityEngine.Networking;
 
 namespace CommandQueueRemastered.Game
 {
-    // Optional host-requested pause reporting; no queue contents or inventory are transmitted.
+    // Host-requested pause/Ignore reporting; no queue contents or inventory are transmitted.
     internal sealed class PausedPlayerSync : IDisposable
     {
         private const short MessageId = 29265;
         private const uint Signature = 0x43515035;
         private readonly RemasteredPlugin plugin;
         private readonly RemoteQueuePauseStatus states = new RemoteQueuePauseStatus();
+        private readonly RemoteQueuePauseStatus ignoredStates = new RemoteQueuePauseStatus();
         private readonly HashSet<NetworkConnection> requestedServers = new HashSet<NetworkConnection>();
         private readonly HashSet<NetworkConnection> reportingClients = new HashSet<NetworkConnection>();
         private readonly Dictionary<NetworkConnection, int> queries = new Dictionary<NetworkConnection, int>();
@@ -22,6 +23,7 @@ namespace CommandQueueRemastered.Game
         private readonly NetworkMessageDelegate serverHandler, clientHandler;
         private float nextUpdate, nextHeartbeat, nextQuery;
         private uint previousMask = uint.MaxValue;
+        private uint previousIgnoreMask = uint.MaxValue;
         private bool collisionReported;
         internal PausedPlayerSync(RemasteredPlugin plugin)
         { this.plugin = plugin; serverHandler = ReceiveState; clientHandler = ReceiveQuery; }
@@ -32,6 +34,16 @@ namespace CommandQueueRemastered.Game
             var user = NetworkUser.readOnlyInstancesList.FirstOrDefault(candidate => candidate.master == master);
             return user && states.IsPaused(user.netId.Value, user.connectionToClient, Array.IndexOf(ItemGroups.Names, group), Time.unscaledTime);
         }
+        internal bool IsIgnored(CharacterMaster master, bool temporary, bool ethereal)
+        {
+            if (!temporary && !ethereal) return false;
+            if (LocalUserManager.readOnlyLocalUsersList.Any(local => local.cachedMaster == master))
+                return SpecialPickupDistribution.Ignores(CurrentIgnoreMask, temporary, ethereal);
+            var user = NetworkUser.readOnlyInstancesList.FirstOrDefault(candidate => candidate.master == master);
+            return user && ((temporary && ignoredStates.IsPaused(user.netId.Value, user.connectionToClient, 0, Time.unscaledTime)) ||
+                (ethereal && ignoredStates.IsPaused(user.netId.Value, user.connectionToClient, 1, Time.unscaledTime)));
+        }
+        private uint CurrentIgnoreMask => SpecialPickupDistribution.IgnoreMask(plugin.IgnoreTemporaryItems.Value, plugin.IgnoreEtherealItems.Value);
         internal void Update()
         {
             if (Time.unscaledTime < nextUpdate) return;
@@ -52,10 +64,11 @@ namespace CommandQueueRemastered.Game
             if (!NetworkServer.active)
             {
                 uint mask = QueuePauseMask.Capture(ItemGroups.Names, plugin.Queue.IsGroupPaused);
-                if (mask != previousMask || Time.unscaledTime >= nextHeartbeat)
+                if (mask != previousMask || CurrentIgnoreMask != previousIgnoreMask || Time.unscaledTime >= nextHeartbeat)
                 {
                     foreach (var connection in requestedServers) SendState(connection, mask);
                     previousMask = mask;
+                    previousIgnoreMask = CurrentIgnoreMask;
                     nextHeartbeat = Time.unscaledTime + 1f;
                 }
                 return;
@@ -65,10 +78,10 @@ namespace CommandQueueRemastered.Game
                 .Select(user => user.connectionToClient).Distinct().ToArray();
             reportingClients.RemoveWhere(connection => !remote.Contains(connection));
             foreach (var stale in queries.Keys.Where(connection => !remote.Contains(connection)).ToArray()) queries.Remove(stale);
-            if (!plugin.ExcludePausedPlayers.Value)
+            if (!plugin.DistributionEnabled.Value)
             {
                 foreach (var connection in reportingClients) connection.Send(MessageId, new PauseMessage { Kind = 2 });
-                reportingClients.Clear(); queries.Clear(); states.Reset();
+                reportingClients.Clear(); queries.Clear(); states.Reset(); ignoredStates.Reset();
                 return;
             }
             if (Time.unscaledTime < nextQuery || !NetworkServer.handlers.TryGetValue(MessageId, out var current) || current != serverHandler) return;
@@ -85,7 +98,7 @@ namespace CommandQueueRemastered.Game
         {
             if (collisionReported) return;
             collisionReported = true;
-            plugin.LogWarning("Pause synchronization channel is occupied by another mod; unknown remote pause states remain eligible.");
+            plugin.LogWarning("Distribution status channel is occupied by another mod; unknown remote Pause/Ignore states remain eligible.");
         }
         private void ReceiveQuery(NetworkMessage message)
         {
@@ -105,7 +118,12 @@ namespace CommandQueueRemastered.Game
             foreach (var local in LocalUserManager.readOnlyLocalUsersList)
             {
                 var user = local.currentNetworkUser;
-                if (user && user.master) connection.Send(MessageId, new PauseMessage { Kind = 1, Player = user.netId.Value, Mask = mask });
+                if (user && user.master)
+                {
+                    connection.Send(MessageId, new PauseMessage { Kind = 1, Player = user.netId.Value, Mask = mask });
+                    // Additive kind: older hosts ignore it, and older clients continue sending kind 1.
+                    connection.Send(MessageId, new PauseMessage { Kind = 3, Player = user.netId.Value, Mask = CurrentIgnoreMask });
+                }
             }
         }
         private void ReceiveState(NetworkMessage message)
@@ -113,18 +131,20 @@ namespace CommandQueueRemastered.Game
             try
             {
                 var packet = message.ReadMessage<PauseMessage>();
-                if (!NetworkServer.active || !packet.Valid || packet.Kind != 1) return;
+                if (!NetworkServer.active || !packet.Valid || (packet.Kind != 1 && packet.Kind != 3)) return;
                 var user = NetworkUser.readOnlyInstancesList.FirstOrDefault(candidate => candidate.netId.Value == packet.Player);
-                // A client may report only the pause status of its own NetworkUser.
-                if (!user || user.connectionToClient != message.conn || (packet.Mask >> ItemGroups.Names.Length) != 0) return;
-                if (!plugin.ExcludePausedPlayers.Value)
+                // A client may report only its own NetworkUser, with valid bits for this kind.
+                int bits = packet.Kind == 1 ? ItemGroups.Names.Length : 2;
+                if (!user || user.connectionToClient != message.conn || (packet.Mask >> bits) != 0) return;
+                if (!plugin.DistributionEnabled.Value)
                 { message.conn.Send(MessageId, new PauseMessage { Kind = 2 }); return; }
-                states.Set(packet.Player, message.conn, packet.Mask, Time.unscaledTime);
+                if (packet.Kind == 1) states.Set(packet.Player, message.conn, packet.Mask, Time.unscaledTime);
+                else ignoredStates.Set(packet.Player, message.conn, packet.Mask, Time.unscaledTime);
                 reportingClients.Add(message.conn);
             }
             catch (Exception exception) { plugin.LogError("Invalid pause report ignored", exception); }
         }
-        internal void Reset() { states.Reset(); queries.Clear(); reportingClients.Clear(); }
+        internal void Reset() { states.Reset(); ignoredStates.Reset(); queries.Clear(); reportingClients.Clear(); }
         public void Dispose()
         {
             if (NetworkServer.handlers.TryGetValue(MessageId, out var handler) && handler == serverHandler) NetworkServer.UnregisterHandler(MessageId);

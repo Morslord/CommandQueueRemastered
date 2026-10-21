@@ -1,4 +1,4 @@
-# Building CommandQueue Remastered 0.4.0
+# Building CommandQueue Remastered 0.4.1
 
 The mod targets .NET Standard 2.1 and references the installed Risk of Rain 2 1.5.0 assemblies.
 
@@ -50,3 +50,9 @@ Keep these files and directories in their repository locations:
 
 The `tools/` directory is optional and is not required to compile the mod. Generated `bin/`, `obj/` and `.vs/` directories are not needed to rebuild it.
 
+
+0.4.1 checks additionally cover unique limiter stacks, cap-aware selection and Repeat, version 1/2 document migration, group-scoped limiter presets, distribution exclusions, pending assignment accounting and Hex blocks of seven. Native source-context and reservation-lifecycle hooks require in-game host/client validation.
+
+Special-pool regressions cover absent/unavailable heads, tier/limiter/pause guards, no-consumption and both Repeat modes, changed pools and exclusive choices. Drifter Salvage uses a single Original/SkillUser/ItemDistribution dropdown with SkillUser default; its native source-context hook still needs in-game validation.
+
+Personal temporary/ethereal Ignore flags use additive message kind 3 on the existing signed/versioned status channel, with a two-bit mask. Clients report only their own NetworkUser, host checks connection ownership; states expire after five seconds with one-second heartbeats. Unknown/old clients remain eligible. Status queries run while distribution is enabled independently of ExcludePausedPlayers. Drifter caster identity is captured in the native source scope and stored per deferred recipient; separate simultaneous casters do not share a target. New network/source paths require in-game validation.

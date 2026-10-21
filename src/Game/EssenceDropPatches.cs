@@ -33,12 +33,16 @@ namespace CommandQueueRemastered.Game
             if (!NetworkServer.active || !plugin || !Run.instance || info.pickup.ignoreArtifactBasedPickupReplacements ||
                 (!CommandArtifactManager.IsCommandArtifactEnabled && (info.artifactFlag & GenericPickupController.PickupArtifactFlag.Command) == 0) ||
                 (info.artifactFlag & GenericPickupController.PickupArtifactFlag.Delusion) != 0) return null;
+            if (!DistributionRules.Allows(plugin.DistributionEnabled.Value, SceneCatalog.mostRecentSceneDef ? SceneCatalog.mostRecentSceneDef.baseSceneName : null,
+                plugin.ExcludedDistributionStages.Value, DistributionSourceContext.Current, plugin.DistributeChests.Value,
+                plugin.DistributeExchangePools.Value, plugin.DistributeTeleporterRewards.Value, plugin.DrifterSalvage.Value)) return null;
             var pickup = PickupCatalog.GetPickupDef(info.pickup.pickupIndex);
             var item = pickup == null ? null : ItemCatalog.GetItemDef(pickup.itemIndex);
             // Equipment and unrelated pickups retain their original location.
             if (pickup == null || pickup.equipmentIndex != EquipmentIndex.None) return null;
             ItemTier tier = item ? item.tier : pickup.itemTier;
-            if (!plugin.EssenceDropModes.TryGetValue(tier, out var setting) || setting.Value == EssenceDropMode.Original) return null;
+            bool skillUser = DistributionSourceContext.Current == DropSource.DrifterSalvage && plugin.DrifterSalvage.Value == DrifterSalvageMode.SkillUser;
+            if (!plugin.EssenceDropModes.TryGetValue(tier, out var setting) || (!skillUser && setting.Value == EssenceDropMode.Original)) return null;
             var players = PlayerCharacterMasterController.instances.Select(player => player.master)
                 .Where(master => master && master.inventory && master.GetBody() && master.GetBody().healthComponent &&
                     master.GetBody().healthComponent.alive && master.teamIndex == TeamIndex.Player)
@@ -47,14 +51,20 @@ namespace CommandQueueRemastered.Game
             {
                 long count = 0;
                 foreach (var definition in ItemCatalog.allItemDefs)
-                    if (plugin.FewestItemsCount.Value == InventoryCountMode.AllItems || definition.tier == tier)
+                    if ((tier == ItemTier.Hex && plugin.HexGroupsOfSeven.Value) ? definition.tier == ItemTier.Hex :
+                        plugin.FewestItemsCount.Value == InventoryCountMode.AllItems || definition.tier == tier)
                         count += master.inventory.GetItemCountPermanent(definition.itemIndex);
-                return count;
+                return count + EssenceAssignments.Ledger.Count(master.netId.Value, tier.ToString(),
+                    tier == ItemTier.Hex && plugin.HexGroupsOfSeven.Value ? InventoryCountMode.SameTier : plugin.FewestItemsCount.Value);
             }
-            long? recipient = Distribution.Choose(tier.ToString(), setting.Value,
-                players.Select(master => new DropCandidate(master.netId.Value, setting.Value == EssenceDropMode.FewestItems ? Count(master) : 0,
-                    plugin.ExcludePausedPlayers.Value && plugin.PlayerPaused(master, ItemGroups.Group(tier)))),
-                Killer ? (long?)Killer.netId.Value : null, plugin.ExcludePausedPlayers.Value);
+            var uniquePickup = info.pickup;
+            var candidates = players.Select(master => new DropCandidate(master.netId.Value,
+                !skillUser && (setting.Value == EssenceDropMode.FewestItems || (tier == ItemTier.Hex && plugin.HexGroupsOfSeven.Value)) ? Count(master) : 0,
+                plugin.ExcludePausedPlayers.Value && plugin.PlayerPaused(master, ItemGroups.Group(tier)), plugin.PlayerIgnores(master, uniquePickup))).ToArray();
+            long? recipient = skillUser
+                ? EssenceDistribution.ChooseSkillUser(candidates, DistributionSourceContext.SkillUser ? (long?)DistributionSourceContext.SkillUser.netId.Value : null, plugin.ExcludePausedPlayers.Value)
+                : Distribution.Choose(tier.ToString(), setting.Value, candidates,
+                    Killer ? (long?)Killer.netId.Value : null, plugin.ExcludePausedPlayers.Value, tier == ItemTier.Hex && plugin.HexGroupsOfSeven.Value);
             var target = players.FirstOrDefault(master => master.netId.Value == recipient);
             var body = target ? target.GetBody() : null;
             if (!body) return null;

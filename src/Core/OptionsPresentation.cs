@@ -16,6 +16,8 @@ namespace CommandQueueRemastered.Core
                 case "VoidTier1": return "VoidWhite";
                 case "VoidTier2": return "VoidGreen";
                 case "VoidTier3": return "VoidRed";
+                case "Cursed": return "Hallowed";
+                case "Page": return "Pages";
                 default: return key;
             }
         }
