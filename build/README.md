@@ -1,8 +1,6 @@
 # CommandQueue Remastered
 
-**Beta 0.4.1** — plan your Artifact of Command picks directly in the Risk of Rain 2 scoreboard.
-
-Development build for branch testing. Gameplay and multiplayer testing is incomplete; some essences can remain on the ground while moving.
+**Version 0.4.1** — plan your Artifact of Command picks directly in the Risk of Rain 2 scoreboard.
 
 Build item queues, repeat your preferred picks and save presets without leaving the game's interface. Remastered combines the functionality of CommandQueueExtended, CommandQueueExtendedIconFix and ProperSave_CommandQueueExtended in one mod.
 
@@ -46,7 +44,7 @@ RiskOfOptions and LookingGlass are optional. Without RiskOfOptions, use the conf
 3. Choose an item group and click the items you want to queue.
 4. Interact with a matching Command essence. Remastered selects the next eligible queued item automatically.
 
-The **Players** button returns to the original scoreboard overview. Keyboard and mouse are the intended controls; **controller support has not been tested and controller compatibility is unverified**.
+The **Players** button returns to the original scoreboard overview. Keyboard and mouse are the intended controls.
 
 ## Controls
 
@@ -147,13 +145,13 @@ Essence location settings are controlled by the host/server and affect Command i
 
 **FewestItems** counts permanent stacks plus outstanding permanent essence assignments. Choose **AllItems** across all items or **SameTier** for the actual essence tier. Temporary and ethereal items are excluded; ties alternate per tier. Assignments follow the native droplet, essence, selected ground item and transfer orb, and are released on collection, arrival, destruction or run reset. All settings apply immediately. This accounting grants no exclusive ownership of drops.
 
-**AutoCollectQueuedItems** defaults off and collects only successful automatic selections using an existing queue entry. Manual choices and exclusive Automatic choices without an entry still drop normally. Use AutoPickupCommandEssence to also open matching nearby essences automatically. Pause, group and temporary/ethereal policies retain priority; native item-transfer orbs preserve pickup status and normal consumption/Repeat behavior. In multiplayer, Remastered 0.4.0 or newer and this option are required on both host and selecting client. Older/unmodded hosts retain normal item drops. Multiplayer behavior still needs in-game validation.
+**AutoCollectQueuedItems** defaults off and collects only successful automatic selections using an existing queue entry. Manual choices and exclusive Automatic choices without an entry still drop normally. Use AutoPickupCommandEssence to also open matching nearby essences automatically. Pause, group and temporary/ethereal policies retain priority; native item-transfer orbs preserve pickup status and normal consumption/Repeat behavior. In multiplayer, Remastered 0.4.0 or newer and this option are required on both host and selecting client. Older/unmodded hosts retain normal item drops.
 
 Preset files keep their versioned metadata and legacy import status, with one compact preset per line.
 
 Assigned drops wait as complete pickup data until delivery. The host leaves at least 1/30 second between deliveries (at most 30 per second), never creates more than one per rendered frame, and does not catch up with a burst after a frame hitch, using the recipient's current position and the native Command conversion. Waiting drops do not depend on live droplet objects. Missing recipients fall back to the original position and normal physics; Original-location drops keep their normal flight.
 
-AutoPickup uses registered live essences, with at most 32 distance checks, four nearby choice checks and one interaction per local player per step. New essences receive priority and old candidates rotate. No repeated full-scene essence/prompt scan or global sorting is used. Normal interaction range, line of sight, pause and next-frame queue validation still apply. These limits do not constitute a measured FPS guarantee; large bursts and fast multiplayer movement need in-game testing.
+AutoPickup uses registered live essences, with at most 32 distance checks, four nearby choice checks and one interaction per local player per step. New essences receive priority and old candidates rotate. No repeated full-scene essence/prompt scan or global sorting is used. Normal interaction range, line of sight, pause and next-frame queue validation still apply.
 
 RiskOfOptions uses **Item Distribution**, **Special Items**, **VoidWhite**, **VoidGreen** and **VoidRed**. Behavior choices in descriptions are separated by blank lines. Existing BepInEx sections and keys retain their stored values.
 
@@ -191,9 +189,9 @@ The selected item's temporary or ethereal status is preserved. For temporary and
 
 **ExclusiveItemSelection** applies to exclusive Command essences offering **Halcyon Seed, Newly Hatched Zoea, Exposed Cerebellum, Encrypted Cerebellum, Prison Matrix or Sentry Key**. **Default** requires the item anywhere in the queue. **Automatic** selects it even without an entry. Automatic selects after you interact with the essence; it does not open an essence by itself. AutoPickupCommandEssence opens it only when an active queue has a matching entry. Existing entries follow consumption/Repeat rules; without an entry, the queue stays unchanged. Pause, disabled groups and temporary/ethereal policies take priority. AutoCollectQueuedItems can collect selections using an existing queue entry; selections without an entry still drop normally. Queued exclusive items that are not offered by the current essence do not block later normal items of the same tier. Those exclusive entries stay queued for their matching essences. Offered but unavailable items still open the manual menu.
 
-## Beta status and feedback
+## Compatibility and feedback
 
-This beta targets **Risk of Rain 2 1.5.0**. Multiplayer behavior and all mod combinations have not been fully validated. Controller support is untested.
+Targets **Risk of Rain 2 1.5.0**. Keyboard and mouse are the intended controls.
 
 Each queue stack supports up to **999 items**. Larger imported stacks are split without losing items.
 
@@ -210,4 +208,4 @@ When reporting a problem, include the mod and game versions, steps to reproduce 
 
 ## AI disclosure
 
-Generative AI (OpenAI Codex) assisted with the development of this mod and the writing of its documentation. In-game testing and feedback were provided by the maintainer. AI assistance does not guarantee correctness; the validation limits described above apply.
+Generative AI (OpenAI Codex) assisted with the development of this mod and the writing of its documentation. In-game testing and feedback were provided by the maintainer.

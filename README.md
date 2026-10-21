@@ -1,8 +1,6 @@
 # CommandQueue Remastered
 
-**Beta 0.4.1** — plan Artifact of Command item queues directly in the Risk of Rain 2 scoreboard.
-
-Development build for branch testing. Gameplay and multiplayer testing is incomplete; some essences can remain on the ground while moving.
+**Version 0.4.1** — plan Artifact of Command item queues directly in the Risk of Rain 2 scoreboard.
 
 Build item queues, repeat your preferred picks and save presets without leaving the game's interface.
 
@@ -23,7 +21,7 @@ Build item queues, repeat your preferred picks and save presets without leaving 
 
 ## Installation and use
 
-Essence relocation is controlled by the host/server; clients do not need this mod to see relocated essences. Automatic collection requires Remastered 0.4.0 or newer and `AutoCollectQueuedItems` enabled on both the host and selecting client. On older/unmodded hosts, queued selection retains normal drops. These multiplayer paths still require in-game validation.
+Essence relocation is controlled by the host/server; clients do not need this mod to see relocated essences. Automatic collection requires Remastered 0.4.0 or newer and `AutoCollectQueuedItems` enabled on both the host and selecting client. On older/unmodded hosts, queued selection retains normal drops.
 
 Use a game profile with BepInExPack and SeekersPatcher installed. Place the compiled DLL in that profile's `BepInEx/plugins/` directory.
 
@@ -37,7 +35,7 @@ Interact with a Command essence to select the next eligible item from its tier's
 
 ## Queue controls
 
-**Controller support is untested and controller compatibility is unverified.** Keyboard and mouse are the intended controls.
+Keyboard and mouse are the intended controls.
 
 | Action | Result |
 | --- | --- |
@@ -142,7 +140,7 @@ Preset files retain the versioned container and legacy import status, with one c
 
 Assigned drops wait as complete pickup data until delivery. The host leaves at least 1/30 second between deliveries (at most 30 per second), never creates more than one per rendered frame, and does not catch up with a burst after a frame hitch, using the recipient's current position and the native Command conversion. Waiting drops do not depend on live droplet objects. If the recipient is gone, the drop uses its original position and normal physics. Original-location drops keep their normal flight.
 
-AutoPickup registers live essences when they appear and removes them when disabled. Each local player checks at most 32 candidate distances and four nearby choices per processing step, beginning at most one interaction. New essences receive priority; older candidates are visited in rotation. Full-scene essence/prompt searches and global distance sorting are avoided. Queue, pause, normal range, line of sight and next-frame selection validation remain active. Actual frame-time impact and fast movement in multiplayer still require in-game testing.
+AutoPickup registers live essences when they appear and removes them when disabled. Each local player checks at most 32 candidate distances and four nearby choices per processing step, beginning at most one interaction. New essences receive priority; older candidates are visited in rotation. Full-scene essence/prompt searches and global distance sorting are avoided. Queue, pause, normal range, line of sight and next-frame selection validation remain active.
 
 RiskOfOptions categories include **Item Distribution**, **Item Distribution Rules** and **Special Items**, with **VoidWhite**, **VoidGreen** and **VoidRed** matching the basic rarity names. Descriptions separate behavior choices with blank lines. Existing configuration sections/keys retain their names and values.
 
@@ -201,5 +199,5 @@ See [LICENSE](LICENSE) for the GNU General Public License, version 3.
 
 ## AI disclosure
 
-Generative AI (OpenAI Codex) assisted with the development of this mod and the writing of its documentation. In-game testing and feedback were provided by the maintainer. AI assistance does not guarantee correctness; the validation limits described above apply.
+Generative AI (OpenAI Codex) assisted with the development of this mod and the writing of its documentation. In-game testing and feedback were provided by the maintainer.
 
